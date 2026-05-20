@@ -281,6 +281,7 @@ pub(super) fn parse_list_query(query: Option<&str>) -> std::result::Result<ListQ
                     filter.status = QueryRecordStatus::parse(value.as_str())?;
                 }
             }
+            "matcher_tag" => filter.matcher_tag = optional_text(value.as_ref()),
             _ => {}
         }
     }
@@ -315,6 +316,7 @@ pub(super) fn parse_plugins_stats_query(
                     filter.status = QueryRecordStatus::parse(value.as_str())?;
                 }
             }
+            "matcher_tag" => filter.matcher_tag = optional_text(value.as_ref()),
             _ => {}
         }
     }

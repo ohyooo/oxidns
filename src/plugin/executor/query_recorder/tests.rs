@@ -353,6 +353,12 @@ fn test_query_recorder_query_parsers_accept_common_filters() {
 
     let err = super::api::parse_list_query(Some("status=bad")).unwrap_err();
     assert!(err.contains("status must be one of"));
+
+    let with_matcher = super::api::parse_list_query(Some("matcher_tag=ads")).unwrap();
+    assert_eq!(with_matcher.filter.matcher_tag.as_deref(), Some("ads"));
+    let stats_with_matcher =
+        super::api::parse_plugins_stats_query(Some("kind=matcher&matcher_tag=cn")).unwrap();
+    assert_eq!(stats_with_matcher.filter.matcher_tag.as_deref(), Some("cn"));
 }
 
 #[tokio::test]
@@ -498,6 +504,26 @@ async fn test_query_recorder_query_records_support_common_filters() {
             },
         ),
         vec![3, 2]
+    );
+    assert_eq!(
+        filtered_record_ids(
+            backend.clone(),
+            list_query(QueryRecordFilter {
+                matcher_tag: Some("ads".to_string()),
+                ..QueryRecordFilter::default()
+            }),
+        ),
+        vec![2, 1]
+    );
+    assert!(
+        filtered_record_ids(
+            backend.clone(),
+            list_query(QueryRecordFilter {
+                matcher_tag: Some("nope".to_string()),
+                ..QueryRecordFilter::default()
+            }),
+        )
+        .is_empty()
     );
 
     plugin.destroy().await.unwrap();

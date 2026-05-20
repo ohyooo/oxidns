@@ -166,6 +166,7 @@ function QueryRecordsPanel({ tag }: { tag: string }) {
         const response = await fetchQueryRecorderPluginStats(tag, {
           kind: "matcher",
           ...filters,
+          matcherTag: undefined,
         });
         setMatcherStats(response.stats.filter((row) => row.kind === "matcher"));
         setStatsQueryTotal(response.query_total);
@@ -290,6 +291,15 @@ function QueryRecordsPanel({ tag }: { tag: string }) {
         queryTotal={statsQueryTotal}
         loading={statsLoading}
         error={statsError}
+        selectedMatcher={appliedFilters.matcherTag}
+        onSelectMatcher={(matcherTag) => {
+          const nextFilters: QueryRecordFilters = {
+            ...appliedFilters,
+            matcherTag: matcherTag || undefined,
+          };
+          setAppliedFilters(nextFilters);
+          void loadRecords(nextFilters);
+        }}
         onRefresh={() => void loadMatcherStats(appliedFilters)}
       />
       <Card>
@@ -571,12 +581,16 @@ function MatcherStatsCard({
   queryTotal,
   loading,
   error,
+  selectedMatcher,
+  onSelectMatcher,
   onRefresh,
 }: {
   stats: QueryRecorderPluginStatsRow[];
   queryTotal: number;
   loading: boolean;
   error: string | null;
+  selectedMatcher?: string;
+  onSelectMatcher: (matcherTag: string | undefined) => void;
   onRefresh: () => void;
 }) {
   return (
@@ -594,6 +608,17 @@ function MatcherStatsCard({
             <span className="rounded-full border bg-muted/30 px-2 py-0.5">
               Matcher {stats.length} 个
             </span>
+            {selectedMatcher && (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 font-mono text-primary hover:bg-primary/20"
+                onClick={() => onSelectMatcher(undefined)}
+                title="清除选中的 matcher 筛选"
+              >
+                已筛选: {selectedMatcher}
+                <X className="h-3 w-3" />
+              </button>
+            )}
           </div>
         </div>
         <Button
@@ -624,21 +649,53 @@ function MatcherStatsCard({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {stats.map((row) => (
-                <TableRow key={row.tag ?? "(unknown)"}>
-                  <TableCell className="font-mono">
-                    {row.tag ?? "(unknown)"}
-                  </TableCell>
-                  <TableCell className="font-mono">{row.checked}</TableCell>
-                  <TableCell className="font-mono">{row.matched}</TableCell>
-                  <TableCell className="font-mono">
-                    {formatPercent(safeRatio(row.matched, row.checked))}
-                  </TableCell>
-                  <TableCell className="font-mono">
-                    {formatPercent(row.query_share)}
-                  </TableCell>
-                </TableRow>
-              ))}
+              {stats.map((row) => {
+                const tag = row.tag;
+                const selectable = Boolean(tag);
+                const isSelected = selectable && tag === selectedMatcher;
+                return (
+                  <TableRow
+                    key={tag ?? "(unknown)"}
+                    className={
+                      selectable
+                        ? `cursor-pointer ${isSelected ? "bg-primary/10 hover:bg-primary/15" : ""}`
+                        : ""
+                    }
+                    onClick={
+                      selectable
+                        ? () =>
+                            onSelectMatcher(isSelected ? undefined : tag)
+                        : undefined
+                    }
+                    title={
+                      selectable
+                        ? isSelected
+                          ? "点击取消筛选"
+                          : "点击筛选下方匹配此 matcher 的查询"
+                        : undefined
+                    }
+                  >
+                    <TableCell className="font-mono">
+                      <div className="flex items-center gap-2">
+                        <span>{tag ?? "(unknown)"}</span>
+                        {isSelected && (
+                          <Badge variant="secondary" className="font-mono">
+                            已选
+                          </Badge>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="font-mono">{row.checked}</TableCell>
+                    <TableCell className="font-mono">{row.matched}</TableCell>
+                    <TableCell className="font-mono">
+                      {formatPercent(safeRatio(row.matched, row.checked))}
+                    </TableCell>
+                    <TableCell className="font-mono">
+                      {formatPercent(row.query_share)}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
               {!stats.length && (
                 <TableRow>
                   <TableCell
@@ -855,6 +912,19 @@ function recordMatchesFilters(
   ) {
     return false;
   }
+  if (filters.matcherTag) {
+    const steps = (record as Partial<QueryRecordDetail>).steps;
+    if (
+      !steps?.some(
+        (step) =>
+          step.kind === "matcher" &&
+          step.outcome === "matched" &&
+          step.tag === filters.matcherTag,
+      )
+    ) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -867,6 +937,7 @@ function countActiveFilters(filters: QueryRecordFilters) {
     filters.status,
     filters.sinceMs,
     filters.untilMs,
+    filters.matcherTag,
   ].filter((value) => value !== undefined && value !== "").length;
 }
 

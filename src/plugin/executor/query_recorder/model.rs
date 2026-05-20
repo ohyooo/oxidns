@@ -168,6 +168,7 @@ pub(super) struct QueryRecordFilter {
     pub(super) client_ip: Option<String>,
     pub(super) rcode: Option<String>,
     pub(super) status: QueryRecordStatus,
+    pub(super) matcher_tag: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

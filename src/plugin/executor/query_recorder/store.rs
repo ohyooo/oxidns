@@ -381,8 +381,13 @@ pub(super) fn query_records(
     query: ListQuery,
 ) -> std::result::Result<(Vec<RecordRow>, Option<String>), DnsError> {
     let conn = open_database(&backend.path)?;
-    let (mut clauses, mut params) =
-        record_filter_clauses("r", query.since_ms, query.until_ms, &query.filter)?;
+    let (mut clauses, mut params) = record_filter_clauses(
+        "r",
+        &backend.tables,
+        query.since_ms,
+        query.until_ms,
+        &query.filter,
+    )?;
     if let Some(cursor) = query.cursor {
         clauses.push("(r.created_at_ms < ? OR (r.created_at_ms = ? AND r.id < ?))".to_string());
         params.push(Value::Integer(cursor.created_at_ms));
@@ -544,8 +549,13 @@ pub(super) fn load_plugin_stats(
     query: PluginsStatsQuery,
 ) -> std::result::Result<(u64, Vec<PluginStatsRow>), DnsError> {
     let conn = open_database(&backend.path)?;
-    let (clauses, mut params) =
-        record_filter_clauses("r", query.since_ms, query.until_ms, &query.filter)?;
+    let (clauses, mut params) = record_filter_clauses(
+        "r",
+        &backend.tables,
+        query.since_ms,
+        query.until_ms,
+        &query.filter,
+    )?;
     let where_sql = join_clauses(&clauses);
     let kind_join_filter = if query.kind == PluginStatsKind::All {
         String::new()
@@ -628,6 +638,7 @@ pub(super) fn load_plugin_stats(
 
 fn record_filter_clauses(
     alias: &str,
+    tables: &TableNames,
     since_ms: Option<u64>,
     until_ms: Option<u64>,
     filter: &QueryRecordFilter,
@@ -642,6 +653,20 @@ fn record_filter_clauses(
     if let Some(until_ms) = until_ms {
         clauses.push(format!("{alias}.created_at_ms <= ?"));
         params.push(Value::Integer(as_i64(until_ms)?));
+    }
+    if let Some(matcher_tag) = filter.matcher_tag.as_deref() {
+        clauses.push(format!(
+            "EXISTS (
+                SELECT 1
+                FROM {steps} s
+                WHERE s.record_id = {alias}.id
+                  AND s.kind = 'matcher'
+                  AND s.outcome = 'matched'
+                  AND s.tag = ?
+            )",
+            steps = tables.steps,
+        ));
+        params.push(Value::Text(matcher_tag.to_string()));
     }
     if let Some(qname) = filter.qname.as_deref() {
         clauses.push(format!(
