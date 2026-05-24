@@ -585,7 +585,7 @@ export async function fetchQueryRecordDetail(
 
 export async function fetchQueryRecorderTopClients(
   tag: string,
-  options: QueryRecordFilters & { limit?: number } = {},
+  options: QueryRecordFilters & { limit?: number; signal?: AbortSignal } = {},
 ): Promise<QueryRecorderTopResponse> {
   const params = new URLSearchParams();
   if (options.limit) params.set("limit", String(options.limit));
@@ -593,14 +593,14 @@ export async function fetchQueryRecorderTopClients(
   const suffix = params.toString() ? `?${params.toString()}` : "";
   const response = await fetch(
     apiUrl(`/plugins/${encodeURIComponent(tag)}/stats/top_clients${suffix}`),
-    { method: "GET", headers: apiHeaders() },
+    { method: "GET", headers: apiHeaders(), signal: options.signal },
   );
   return readJsonResponse<QueryRecorderTopResponse>(response);
 }
 
 export async function fetchQueryRecorderTopQnames(
   tag: string,
-  options: QueryRecordFilters & { limit?: number } = {},
+  options: QueryRecordFilters & { limit?: number; signal?: AbortSignal } = {},
 ): Promise<QueryRecorderTopResponse> {
   const params = new URLSearchParams();
   if (options.limit) params.set("limit", String(options.limit));
@@ -608,42 +608,45 @@ export async function fetchQueryRecorderTopQnames(
   const suffix = params.toString() ? `?${params.toString()}` : "";
   const response = await fetch(
     apiUrl(`/plugins/${encodeURIComponent(tag)}/stats/top_qnames${suffix}`),
-    { method: "GET", headers: apiHeaders() },
+    { method: "GET", headers: apiHeaders(), signal: options.signal },
   );
   return readJsonResponse<QueryRecorderTopResponse>(response);
 }
 
 export async function fetchQueryRecorderQtypeDistribution(
   tag: string,
-  options: QueryRecordFilters = {},
+  options: QueryRecordFilters & { signal?: AbortSignal } = {},
 ): Promise<QueryRecorderDistributionResponse> {
   const params = new URLSearchParams();
   appendQueryRecordFilters(params, options);
   const suffix = params.toString() ? `?${params.toString()}` : "";
   const response = await fetch(
     apiUrl(`/plugins/${encodeURIComponent(tag)}/stats/qtype${suffix}`),
-    { method: "GET", headers: apiHeaders() },
+    { method: "GET", headers: apiHeaders(), signal: options.signal },
   );
   return readJsonResponse<QueryRecorderDistributionResponse>(response);
 }
 
 export async function fetchQueryRecorderRcodeDistribution(
   tag: string,
-  options: QueryRecordFilters = {},
+  options: QueryRecordFilters & { signal?: AbortSignal } = {},
 ): Promise<QueryRecorderDistributionResponse> {
   const params = new URLSearchParams();
   appendQueryRecordFilters(params, options);
   const suffix = params.toString() ? `?${params.toString()}` : "";
   const response = await fetch(
     apiUrl(`/plugins/${encodeURIComponent(tag)}/stats/rcode${suffix}`),
-    { method: "GET", headers: apiHeaders() },
+    { method: "GET", headers: apiHeaders(), signal: options.signal },
   );
   return readJsonResponse<QueryRecorderDistributionResponse>(response);
 }
 
 export async function fetchQueryRecorderLatency(
   tag: string,
-  options: QueryRecordFilters & { slowLimit?: number } = {},
+  options: QueryRecordFilters & {
+    slowLimit?: number;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<QueryRecorderLatencySummary> {
   const params = new URLSearchParams();
   if (options.slowLimit) params.set("slow_limit", String(options.slowLimit));
@@ -651,7 +654,7 @@ export async function fetchQueryRecorderLatency(
   const suffix = params.toString() ? `?${params.toString()}` : "";
   const response = await fetch(
     apiUrl(`/plugins/${encodeURIComponent(tag)}/stats/latency${suffix}`),
-    { method: "GET", headers: apiHeaders() },
+    { method: "GET", headers: apiHeaders(), signal: options.signal },
   );
   return readJsonResponse<QueryRecorderLatencySummary>(response);
 }
@@ -661,6 +664,7 @@ export async function fetchQueryRecorderTimeseries(
   options: QueryRecordFilters & {
     bucket?: QueryRecorderTimeseriesBucket;
     buckets?: number;
+    signal?: AbortSignal;
   } = {},
 ): Promise<QueryRecorderTimeseriesResponse> {
   const params = new URLSearchParams();
@@ -670,7 +674,7 @@ export async function fetchQueryRecorderTimeseries(
   const suffix = params.toString() ? `?${params.toString()}` : "";
   const response = await fetch(
     apiUrl(`/plugins/${encodeURIComponent(tag)}/stats/timeseries${suffix}`),
-    { method: "GET", headers: apiHeaders() },
+    { method: "GET", headers: apiHeaders(), signal: options.signal },
   );
   return readJsonResponse<QueryRecorderTimeseriesResponse>(response);
 }

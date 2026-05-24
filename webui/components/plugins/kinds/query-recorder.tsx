@@ -967,7 +967,7 @@ function QueryRecorderInsightsPanel({ tag }: { tag: string }) {
         </TabsList>
         <TabsContent value="clients">
           <TopBucketsCard
-            key={`clients-${nonce}`}
+            key={`clients-${tag}-${range}-${nonce}`}
             title="客户端 IP 排行"
             icon={<Users className="h-4 w-4 text-primary" />}
             tag={tag}
@@ -978,7 +978,7 @@ function QueryRecorderInsightsPanel({ tag }: { tag: string }) {
         </TabsContent>
         <TabsContent value="qnames">
           <TopBucketsCard
-            key={`qnames-${nonce}`}
+            key={`qnames-${tag}-${range}-${nonce}`}
             title="查询域名排行"
             icon={<Globe className="h-4 w-4 text-primary" />}
             tag={tag}
@@ -989,7 +989,7 @@ function QueryRecorderInsightsPanel({ tag }: { tag: string }) {
         </TabsContent>
         <TabsContent value="qtype">
           <DistributionCard
-            key={`qtype-${nonce}`}
+            key={`qtype-${tag}-${range}-${nonce}`}
             title="QTYPE 分布"
             icon={<BarChart3 className="h-4 w-4 text-primary" />}
             tag={tag}
@@ -1001,7 +1001,7 @@ function QueryRecorderInsightsPanel({ tag }: { tag: string }) {
         </TabsContent>
         <TabsContent value="rcode">
           <DistributionCard
-            key={`rcode-${nonce}`}
+            key={`rcode-${tag}-${range}-${nonce}`}
             title="RCODE 分布"
             icon={<PieChartIcon className="h-4 w-4 text-primary" />}
             tag={tag}
@@ -1012,11 +1012,15 @@ function QueryRecorderInsightsPanel({ tag }: { tag: string }) {
           />
         </TabsContent>
         <TabsContent value="latency">
-          <LatencyCard key={`latency-${nonce}`} tag={tag} filters={filters} />
+          <LatencyCard
+            key={`latency-${tag}-${range}-${nonce}`}
+            tag={tag}
+            filters={filters}
+          />
         </TabsContent>
         <TabsContent value="timeseries">
           <TimeseriesCard
-            key={`timeseries-${nonce}-${range}`}
+            key={`timeseries-${tag}-${range}-${nonce}`}
             tag={tag}
             filters={filters}
             defaultBucket={defaultBucketForRange(range)}
@@ -1072,24 +1076,41 @@ function TopBucketsCard({
   filters: QueryRecordFilters;
   fetcher: (
     tag: string,
-    options: QueryRecordFilters & { limit?: number },
+    options: QueryRecordFilters & { limit?: number; signal?: AbortSignal },
   ) => Promise<QueryRecorderTopResponse>;
   keyLabel: string;
 }) {
   const [data, setData] = useState<QueryRecorderTopResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setLoading(true);
     setError(null);
     try {
-      const response = await fetcher(tag, { ...filters, limit: 20 });
+      const response = await fetcher(tag, {
+        ...filters,
+        limit: 20,
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted || abortRef.current !== controller) {
+        return;
+      }
       setData(response);
     } catch (err) {
+      if (controller.signal.aborted || abortRef.current !== controller) {
+        return;
+      }
       setError(err instanceof Error ? err.message : "读取统计失败");
     } finally {
-      setLoading(false);
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        setLoading(false);
+      }
     }
   }, [tag, filters, fetcher]);
 
@@ -1097,7 +1118,10 @@ function TopBucketsCard({
     const timer = window.setTimeout(() => {
       void load();
     }, 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      abortRef.current?.abort();
+    };
   }, [load]);
 
   const chartData = useMemo(
@@ -1251,7 +1275,7 @@ function DistributionCard({
   filters: QueryRecordFilters;
   fetcher: (
     tag: string,
-    options: QueryRecordFilters,
+    options: QueryRecordFilters & { signal?: AbortSignal },
   ) => Promise<QueryRecorderDistributionResponse>;
   keyLabel: string;
   preferBarChart: boolean;
@@ -1261,17 +1285,33 @@ function DistributionCard({
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setLoading(true);
     setError(null);
     try {
-      const response = await fetcher(tag, filters);
+      const response = await fetcher(tag, {
+        ...filters,
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted || abortRef.current !== controller) {
+        return;
+      }
       setData(response);
     } catch (err) {
+      if (controller.signal.aborted || abortRef.current !== controller) {
+        return;
+      }
       setError(err instanceof Error ? err.message : "读取分布失败");
     } finally {
-      setLoading(false);
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        setLoading(false);
+      }
     }
   }, [tag, filters, fetcher]);
 
@@ -1279,7 +1319,10 @@ function DistributionCard({
     const timer = window.setTimeout(() => {
       void load();
     }, 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      abortRef.current?.abort();
+    };
   }, [load]);
 
   const rows = useMemo(() => data?.rows ?? [], [data]);
@@ -1443,20 +1486,34 @@ function LatencyCard({
   const [data, setData] = useState<QueryRecorderLatencySummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setLoading(true);
     setError(null);
     try {
       const response = await fetchQueryRecorderLatency(tag, {
         ...filters,
         slowLimit: 20,
+        signal: controller.signal,
       });
+      if (controller.signal.aborted || abortRef.current !== controller) {
+        return;
+      }
       setData(response);
     } catch (err) {
+      if (controller.signal.aborted || abortRef.current !== controller) {
+        return;
+      }
       setError(err instanceof Error ? err.message : "读取延迟统计失败");
     } finally {
-      setLoading(false);
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        setLoading(false);
+      }
     }
   }, [tag, filters]);
 
@@ -1464,7 +1521,10 @@ function LatencyCard({
     const timer = window.setTimeout(() => {
       void load();
     }, 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      abortRef.current?.abort();
+    };
   }, [load]);
 
   const histogram = useMemo(() => {
@@ -1634,8 +1694,12 @@ function TimeseriesCard({
     useState<QueryRecorderTimeseriesBucket>(defaultBucket);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setLoading(true);
     setError(null);
     try {
@@ -1643,12 +1707,22 @@ function TimeseriesCard({
         ...filters,
         bucket,
         buckets: bucket === "minute" ? 60 : 48,
+        signal: controller.signal,
       });
+      if (controller.signal.aborted || abortRef.current !== controller) {
+        return;
+      }
       setData(response);
     } catch (err) {
+      if (controller.signal.aborted || abortRef.current !== controller) {
+        return;
+      }
       setError(err instanceof Error ? err.message : "读取趋势失败");
     } finally {
-      setLoading(false);
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        setLoading(false);
+      }
     }
   }, [tag, filters, bucket]);
 
@@ -1656,7 +1730,10 @@ function TimeseriesCard({
     const timer = window.setTimeout(() => {
       void load();
     }, 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      abortRef.current?.abort();
+    };
   }, [load]);
 
   const points = useMemo(() => {
@@ -1687,9 +1764,10 @@ function TimeseriesCard({
         <div className="flex items-center gap-2">
           <Select
             value={bucket}
-            onValueChange={(value) =>
-              setBucket(value as QueryRecorderTimeseriesBucket)
-            }
+            onValueChange={(value) => {
+              abortRef.current?.abort();
+              setBucket(value as QueryRecorderTimeseriesBucket);
+            }}
           >
             <SelectTrigger className="h-8 w-[110px]">
               <SelectValue />
@@ -2098,10 +2176,7 @@ function formatFullTime(ms: number) {
   return new Date(ms).toLocaleString();
 }
 
-function formatBucketLabel(
-  ms: number,
-  bucket: QueryRecorderTimeseriesBucket,
-) {
+function formatBucketLabel(ms: number, bucket: QueryRecorderTimeseriesBucket) {
   const date = new Date(ms);
   if (bucket === "hour") {
     return date.toLocaleString([], {

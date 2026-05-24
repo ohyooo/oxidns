@@ -609,6 +609,56 @@ async fn test_query_recorder_matcher_stats_use_record_filters() {
     plugin.destroy().await.unwrap();
 }
 
+#[tokio::test]
+async fn test_query_recorder_plugin_stats_preserve_total_without_steps() {
+    let temp = NamedTempFile::new().unwrap();
+    let config = resolve_config(Some(recorder_config(&temp.path().display().to_string()))).unwrap();
+    let mut plugin = QueryRecorder::new("rec".to_string(), config);
+    plugin.init_for_test().await.unwrap();
+    let backend = plugin.backend.as_ref().unwrap().clone();
+
+    backend.enqueue(pending_record(
+        1_000,
+        1,
+        "www.example.com.",
+        RecordType::A,
+        Ipv4Addr::new(192, 0, 2, 1),
+        Some(Rcode::NoError),
+        None,
+        &[],
+    ));
+    backend.enqueue(pending_record(
+        2_000,
+        2,
+        "ads.example.com.",
+        RecordType::AAAA,
+        Ipv4Addr::new(192, 0, 2, 2),
+        Some(Rcode::NoError),
+        None,
+        &[],
+    ));
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let (query_total, stats) = load_plugin_stats(
+        backend,
+        PluginsStatsQuery {
+            since_ms: None,
+            until_ms: None,
+            kind: PluginStatsKind::Matcher,
+            filter: QueryRecordFilter {
+                qname: Some("example".to_string()),
+                ..QueryRecordFilter::default()
+            },
+        },
+    )
+    .unwrap();
+
+    assert_eq!(query_total, 2);
+    assert!(stats.is_empty());
+
+    plugin.destroy().await.unwrap();
+}
+
 async fn seed_demo_records(backend: &std::sync::Arc<super::backend::RecorderBackend>) {
     backend.enqueue(pending_record(
         1_000,

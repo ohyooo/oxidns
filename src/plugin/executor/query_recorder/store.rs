@@ -609,6 +609,9 @@ pub(super) fn load_plugin_stats(
             ORDER BY r.created_at_ms DESC, r.id DESC
             LIMIT ?
          ),
+         totals AS (
+            SELECT COUNT(*) AS total_records FROM sample_records
+         ),
          step_agg AS (
             SELECT
                 s.kind,
@@ -634,14 +637,15 @@ pub(super) fn load_plugin_stats(
             GROUP BY s.kind, s.tag
          )
          SELECT
-            (SELECT COUNT(*) FROM sample_records) AS total_records,
+            totals.total_records,
             sa.kind,
             sa.tag,
             sa.checked,
             sa.matched,
             sa.executed,
             sa.query_hits
-         FROM step_agg sa
+         FROM totals
+         LEFT JOIN step_agg sa ON 1 = 1
          ORDER BY sa.kind ASC, sa.query_hits DESC, sa.tag ASC",
         steps = backend.tables.steps,
         records = backend.tables.records,
