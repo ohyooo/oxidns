@@ -2204,7 +2204,7 @@ sidebar_position: 3
       backup_dir: ./upgrade/backups
       webui_dir: ./webui
       skip_webui: false
-      restart: service
+      no_restart: false
       force: false
       cleanup: true
       timeout: 30s
@@ -2236,8 +2236,11 @@ sidebar_position: 3
     - 类型：`bool`
     - 默认值：`false`
     - 设为 `true` 时只替换二进制文件，跳过 WebUI 目录升级。
-- `restart`
-    - 可选值为 `none` 或 `service`。设置为 `service` 时，升级成功替换二进制文件后，应用会主动退出并返回错误码，以便 systemd 自动重启。因此，对应的 service 必须将 `Restart` 设置为 `always` 或 `on-failure`。
+- `no_restart`
+    - 类型：`bool`
+    - 默认值：`false`
+    - 与 CLI `--no-restart` 语义一致。设为 `true` 时，升级成功后不触发自动重启。
+    - 默认值 `false` 会在升级成功后自动重启：CLI `apply` 通过系统服务管理器重启已安装服务，插件内执行时通过应用控制通道触发优雅重启并加载新二进制。
 - `timeout`、`socks5`、`insecure_skip_verify`
     - 与 CLI `upgrade` 参数含义一致。
 

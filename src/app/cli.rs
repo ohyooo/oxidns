@@ -7,7 +7,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand};
-use serde::Deserialize;
 
 /// Top-level CLI definition.
 #[derive(Parser, Clone, Debug)]
@@ -186,14 +185,6 @@ pub enum UpgradeAction {
     Check,
     Download,
     Apply,
-}
-
-/// Restart behavior after applying an upgrade.
-#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RestartMode {
-    None,
-    Service,
 }
 
 fn parse_cli_duration(raw: &str) -> std::result::Result<Duration, String> {

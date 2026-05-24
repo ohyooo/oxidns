@@ -1538,15 +1538,12 @@ export const executorPluginDefinitions: PluginKindDefinition[] = [
         default: false,
       },
       {
-        key: "restart",
+        key: "no_restart",
         description:
-          "设置为 service 时，升级成功替换二进制文件后应用会主动退出并返回错误码，以便 systemd 自动重启。",
-        label: "重启策略",
-        type: "select",
-        options: [
-          { label: "None", value: "none" },
-          { label: "Service", value: "service" },
-        ],
+          "与 CLI --no-restart 语义一致，启用后升级成功也不会触发自动重启。",
+        label: "跳过自动重启",
+        type: "switch",
+        default: false,
       },
       {
         key: "timeout",

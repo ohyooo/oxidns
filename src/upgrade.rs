@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use tokio::time::timeout;
 use tracing::info;
 
-use crate::app::cli::{RestartMode, UpgradeAction, UpgradeOptions};
+use crate::app::cli::{UpgradeAction, UpgradeOptions};
 use crate::core::VERSION;
 use crate::core::error::{DnsError, Result};
 use crate::network::http_client::{
@@ -43,7 +43,7 @@ pub struct UpgradeConfig {
     pub backup_dir: PathBuf,
     pub webui_dir: PathBuf,
     pub skip_webui: bool,
-    pub restart: RestartMode,
+    pub no_restart: bool,
     pub allow_prerelease: bool,
     pub force: bool,
     pub cleanup_after_apply: bool,
@@ -63,7 +63,7 @@ impl Default for UpgradeConfig {
             backup_dir: PathBuf::from(DEFAULT_BACKUP_DIR),
             webui_dir: PathBuf::from(DEFAULT_WEBUI_DIR),
             skip_webui: false,
-            restart: RestartMode::Service,
+            no_restart: false,
             allow_prerelease: false,
             force: false,
             cleanup_after_apply: false,
@@ -85,11 +85,7 @@ impl UpgradeConfig {
             backup_dir: options.backup_dir.clone(),
             webui_dir: options.webui_dir.clone(),
             skip_webui: options.skip_webui,
-            restart: if options.no_restart {
-                RestartMode::None
-            } else {
-                RestartMode::Service
-            },
+            no_restart: options.no_restart,
             allow_prerelease: options.allow_prerelease,
             force: options.force,
             cleanup_after_apply: false,
@@ -194,7 +190,7 @@ pub fn run_cli(action: UpgradeAction, config: UpgradeConfig) -> Result<()> {
                         }
                         println!("Downloading, verifying, and replacing the current binary...");
                         let outcome = apply_unchecked(&config, UpgradeContext::Cli).await?;
-                        if config.restart == RestartMode::Service {
+                        if !config.no_restart {
                             println!("Service restart completed.");
                         }
                         println!(
@@ -250,7 +246,7 @@ fn print_cli_plan(action: &str, config: &UpgradeConfig) {
     println!("Cache: {}", config.cache_dir.display());
     if action == "apply" {
         println!("Backup: {}", config.backup_dir.display());
-        println!("Restart: {:?}", config.restart);
+        println!("No restart: {}", config.no_restart);
         println!("Force: {}", config.force);
     }
     if action == "apply" || action == "check" {
@@ -521,7 +517,7 @@ async fn apply_unchecked(
         let _ = cleanup_upgrade_artifacts(config);
     }
 
-    if config.restart == RestartMode::Service {
+    if !config.no_restart {
         print_cli_apply_step(restart_context, "Restarting installed service...");
         restart_after_apply(restart_context)?;
     }
@@ -1227,6 +1223,7 @@ mod tests {
         let config = UpgradeConfig::default();
         assert_eq!(config.webui_dir, PathBuf::from("./webui"));
         assert!(!config.skip_webui);
+        assert!(!config.no_restart);
     }
 
     #[test]
@@ -1249,6 +1246,20 @@ mod tests {
         let config = UpgradeConfig::from_cli(&opts);
         assert_eq!(config.webui_dir, PathBuf::from("/tmp/oxidns-webui"));
         assert!(config.skip_webui);
+    }
+
+    #[test]
+    fn from_cli_maps_no_restart_flag() {
+        use clap::Parser;
+
+        use crate::app::cli::{Cli, Command};
+
+        let cli = Cli::parse_from(["oxidns", "upgrade", "apply", "--no-restart"]);
+        let Command::Upgrade(opts) = cli.command else {
+            panic!("expected upgrade command");
+        };
+        let config = UpgradeConfig::from_cli(&opts);
+        assert!(config.no_restart);
     }
 
     #[cfg(not(windows))]
