@@ -389,8 +389,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ isRestarting: true });
     try {
       await get().saveConfig();
+      // Capture the running process's uptime before the request: pollReconnect
+      // uses it to detect a uptime-reset signature when the down transition
+      // happens faster than the polling interval can observe.
+      let baselineUptimeMs: number | undefined;
+      try {
+        baselineUptimeMs = (await fetchHealth()).uptime_ms;
+      } catch {
+        // Health probe failures here are fine; pollReconnect falls back to
+        // requiring an observed down transition.
+      }
       await requestRestart();
-      await pollReconnect();
+      await pollReconnect(baselineUptimeMs);
       await get().loadConfig();
     } finally {
       set({ isRestarting: false });
@@ -614,19 +624,42 @@ function delay(ms: number): Promise<void> {
 }
 
 // Wait for the server to go down and then come back up after a restart request.
-// Phase 1: poll until health fails (process stopped, max 30s).
-// Phase 2: poll until health succeeds (new process ready, max 60s).
-// Throws if either phase times out.
-async function pollReconnect(): Promise<void> {
+//
+// Restart success requires positive evidence that the process actually
+// recycled — otherwise an ignored or silently-failed restart command would
+// look identical to a normal healthy response from the unchanged old process.
+//
+// Phase 1 (max 30s): poll until health fails (down transition observed).
+// Phase 2 (max 60s): poll until health succeeds AND we can prove the
+//   responding process is new. Three independent signals count as proof:
+//     1. sawDown        — phase 1 observed the old process going away.
+//     2. uptimeReset    — uptime_ms is strictly lower than the pre-restart
+//                         baseline (only possible across a process restart).
+//     3. freshProcess   — uptime_ms is smaller than the elapsed time since
+//                         pollReconnect started (plus a small clock-skew
+//                         buffer). The new process cannot have existed
+//                         before we began polling, so a tiny uptime relative
+//                         to our own wall-clock proves freshness even when
+//                         baselineUptimeMs was unavailable and the down
+//                         window was shorter than the phase-1 interval.
+// If phase 2 deadline passes without any signal, throw — this surfaces
+// "restart never happened" instead of silently returning success.
+const FRESH_PROCESS_BUFFER_MS = 2_000;
+
+async function pollReconnect(baselineUptimeMs?: number): Promise<void> {
+  const startTime = Date.now();
+  let sawDown = false;
+
   // Phase 1: wait for the old process to shut down
-  const downDeadline = Date.now() + 30_000;
+  const downDeadline = startTime + 30_000;
   while (Date.now() < downDeadline) {
     await delay(800);
     try {
       await fetchHealth();
       // Still up — keep waiting
     } catch {
-      break; // Process is down, move to phase 2
+      sawDown = true;
+      break;
     }
   }
 
@@ -634,14 +667,30 @@ async function pollReconnect(): Promise<void> {
   const upDeadline = Date.now() + 60_000;
   while (Date.now() < upDeadline) {
     await delay(1500);
+    let health;
     try {
-      await fetchHealth();
-      return; // New process is up
+      health = await fetchHealth();
     } catch {
       // Not yet up, keep polling
+      continue;
     }
+    // Healthy. Verify this is the *new* process via any of three signals
+    // (see the function-level comment for the full rationale).
+    const uptimeReset =
+      baselineUptimeMs !== undefined && health.uptime_ms < baselineUptimeMs;
+    const freshProcess =
+      health.uptime_ms < Date.now() - startTime + FRESH_PROCESS_BUFFER_MS;
+    if (sawDown || uptimeReset || freshProcess) {
+      return;
+    }
+    // Same process as before — restart request likely ignored/failed.
+    // Keep polling in case a delayed restart still happens; the deadline
+    // will surface the real failure if it never does.
   }
 
+  if (!sawDown) {
+    throw new Error("重启未生效：未观察到服务停机，请检查后端日志");
+  }
   throw new Error("重启超时，请刷新页面后手动重新连接");
 }
 
