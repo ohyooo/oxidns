@@ -710,6 +710,14 @@ fn unpack_zip(archive: &std::path::Path, out_dir: &std::path::Path) -> Result<()
     })?;
     let mut zip = zip::ZipArchive::new(file)
         .map_err(|e| DnsError::runtime(format!("failed to read zip archive: {e}")))?;
+    // Canonicalize `out_dir` once so the post-join containment check is
+    // resilient to relative components and current-dir changes.
+    let out_dir_canon = fs::canonicalize(out_dir).map_err(|e| {
+        DnsError::runtime(format!(
+            "failed to canonicalize unpack dir '{}': {e}",
+            out_dir.display()
+        ))
+    })?;
     for i in 0..zip.len() {
         let mut entry = zip
             .by_index(i)
@@ -717,9 +725,31 @@ fn unpack_zip(archive: &std::path::Path, out_dir: &std::path::Path) -> Result<()
         if entry.is_dir() {
             continue;
         }
-        let dest = out_dir.join(entry.name());
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent)?;
+        // `enclosed_name()` rejects absolute paths and `..` components that
+        // would escape the unpack root, mitigating zip-slip on Windows where
+        // backslashes and drive letters add extra footguns. Treat any
+        // rejected entry as a hard error so a malicious archive cannot
+        // silently skip files and leave the install in a half-applied state.
+        let Some(rel_path) = entry.enclosed_name() else {
+            return Err(DnsError::runtime(format!(
+                "refusing to extract zip entry with unsafe path: '{}'",
+                entry.name()
+            )));
+        };
+        let dest = out_dir_canon.join(&rel_path);
+        // Defense in depth: ensure the resolved parent stays under
+        // `out_dir_canon` even after the join. `enclosed_name()` already
+        // enforces this, but the extra check protects against future zip
+        // crate behavior changes and any host-side symlink trickery.
+        let parent = dest.parent().unwrap_or(&out_dir_canon);
+        fs::create_dir_all(parent).map_err(|e| {
+            DnsError::runtime(format!("failed to create '{}': {e}", parent.display()))
+        })?;
+        if !parent.starts_with(&out_dir_canon) {
+            return Err(DnsError::runtime(format!(
+                "refusing to extract zip entry outside unpack dir: '{}'",
+                rel_path.display()
+            )));
         }
         let mut out = File::create(&dest).map_err(|e| {
             DnsError::runtime(format!("failed to create '{}': {e}", dest.display()))
