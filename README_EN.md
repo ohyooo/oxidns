@@ -248,6 +248,16 @@ The maintainers are not responsible for any service disruption, data loss, or se
 
 ---
 
+## Community
+
+Join the Telegram group to chat with the author and other users: [**@OXIDNS** · https://t.me/oxidns](https://t.me/oxidns)
+
+<a href="https://t.me/oxidns">
+  <img src=".github/img/telegram-qr.png" alt="OxiDNS Telegram group QR code" width="220" />
+</a>
+
+---
+
 ## License
 
 This project is licensed under the [GNU General Public License v3.0 or later](LICENSE).

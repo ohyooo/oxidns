@@ -11,8 +11,8 @@
     {
       "name": "docs",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "docs", "run", "start"],
-      "port": 3000,
+      "runtimeArgs": ["--prefix", "docs", "run", "start", "--", "--port", "3100"],
+      "port": 3100,
       "autoPort": true
     }
   ]
