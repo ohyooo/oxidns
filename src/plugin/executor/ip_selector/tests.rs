@@ -157,6 +157,16 @@ fn score_key(ip: [u8; 4], latency_ms: u64) -> (ProbeKey, ProbeObservation) {
     )
 }
 
+async fn wait_for_call_count(runner: &FakeProbeRunner, expected: usize) {
+    for _ in 0..50 {
+        if runner.calls.load(Ordering::SeqCst) >= expected {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    panic!("probe runner did not reach {expected} calls");
+}
+
 #[test]
 fn parse_config_accepts_native_names() {
     let args = serde_yaml_ng::from_str::<Value>(
@@ -480,6 +490,52 @@ async fn inflight_probes_are_coalesced() {
     let _ = tokio::join!(first, second);
 
     assert_eq!(runner.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn cancelled_owner_probe_removes_inflight_entry() {
+    AppClock::start();
+    let mut settings = default_test_settings();
+    settings.cache_enabled = false;
+    let key = ProbeKey {
+        ip: IpAddr::from([2, 2, 2, 2]),
+        method: ProbeMethod::Tcp(443),
+    };
+    let mut scores = AHashMap::new();
+    scores.insert(
+        key.clone(),
+        ProbeObservation {
+            success: true,
+            latency_ms: Some(5),
+            sampled_at_ms: 0,
+        },
+    );
+    let runner = Arc::new(FakeProbeRunner::delayed(scores, Duration::from_millis(100)));
+    let selector = selector_with_runner(settings, runner.clone());
+
+    let first = tokio::spawn(probe_with_runtime(
+        selector.runtime.clone(),
+        key.clone(),
+        Duration::from_millis(500),
+    ));
+    wait_for_call_count(runner.as_ref(), 1).await;
+    first.abort();
+    assert!(first.await.unwrap_err().is_cancelled());
+
+    let _ = probe_with_runtime(
+        selector.runtime.clone(),
+        key.clone(),
+        Duration::from_millis(500),
+    )
+    .await;
+    let calls_after_second_probe = runner.calls.load(Ordering::SeqCst);
+
+    let _ = probe_with_runtime(selector.runtime.clone(), key, Duration::from_millis(500)).await;
+
+    assert_eq!(
+        runner.calls.load(Ordering::SeqCst),
+        calls_after_second_probe + 1
+    );
 }
 
 #[tokio::test]

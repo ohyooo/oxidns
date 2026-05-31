@@ -40,6 +40,23 @@ const EVICTION_SAMPLE_SIZE: usize = 1024;
 pub(super) type ProbeCache = TtlCache<ProbeKey, Arc<ProbeObservation>>;
 type InflightProbe = Arc<OnceCell<ProbeObservation>>;
 
+/// Removes an owned in-flight entry on both normal completion and cancellation.
+///
+/// Foreground probe futures may be dropped early, especially in `first_success`
+/// mode after another address has already won. Keeping cleanup in `Drop`
+/// prevents stale `OnceCell` entries from pinning old observations after cache
+/// expiry or when cache is disabled.
+struct InflightOwnerGuard {
+    runtime: Arc<ProbeRuntime>,
+    key: ProbeKey,
+}
+
+impl Drop for InflightOwnerGuard {
+    fn drop(&mut self) {
+        self.runtime.inflight.remove(&self.key);
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub(super) struct ProbeKey {
     pub(super) ip: IpAddr,
@@ -228,17 +245,23 @@ pub(super) async fn probe_with_runtime(
     }
 
     // OnceCell lets the first request own the real probe while concurrent
-    // requests await the same result. The DashMap entry is removed by the owner
-    // after completion, but the shared cell remains alive for waiters.
-    let (cell, owner) = match runtime.inflight.entry(key.clone()) {
+    // requests await the same result. The owner guard removes the map entry
+    // even if this future is cancelled before the probe finishes.
+    let (cell, owner_guard) = match runtime.inflight.entry(key.clone()) {
         Entry::Occupied(entry) => {
             runtime.metrics.record_dropped_inflight();
-            (entry.get().clone(), false)
+            (entry.get().clone(), None)
         }
         Entry::Vacant(entry) => {
             let cell = Arc::new(OnceCell::new());
             entry.insert(cell.clone());
-            (cell, true)
+            (
+                cell,
+                Some(InflightOwnerGuard {
+                    runtime: runtime.clone(),
+                    key: key.clone(),
+                }),
+            )
         }
     };
 
@@ -265,9 +288,7 @@ pub(super) async fn probe_with_runtime(
         })
         .await;
 
-    if owner {
-        runtime.inflight.remove(&key);
-    }
+    drop(owner_guard);
 
     observation
 }
