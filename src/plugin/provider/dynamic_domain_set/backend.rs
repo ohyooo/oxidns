@@ -10,6 +10,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
+#[cfg(feature = "api")]
 use super::api::{RulesListResponse, register_api};
 use super::config::DynamicDomainSetConfig;
 use super::rules::{DynamicDomainMutation, DynamicDomainRuleKind, canonicalize_rules};
@@ -48,6 +49,7 @@ type MutationReply = oneshot::Sender<DnsResult<DynamicDomainMutation>>;
 /// and synchronous learning. Remove, clear, and reload always wait because they
 /// replace the authoritative file contents and must report completion.
 #[derive(Debug)]
+#[allow(dead_code)]
 enum WorkerCommand {
     Append {
         rules: Vec<String>,
@@ -107,6 +109,7 @@ impl DynamicDomainSetBackend {
         }
     }
 
+    #[cfg(feature = "api")]
     pub(super) fn tag(&self) -> &str {
         &self.tag
     }
@@ -137,6 +140,7 @@ impl DynamicDomainSetBackend {
                 .map_err(|_| DnsError::runtime("dynamic_domain_set worker lock poisoned"))?;
             *slot = Some(handle);
         }
+        #[cfg(feature = "api")]
         register_api(self)?;
         Ok(())
     }
@@ -281,6 +285,7 @@ impl DynamicDomainSetBackend {
             })?
     }
 
+    #[cfg(feature = "api")]
     pub(super) async fn remove_rules_sync(
         &self,
         raw_rules: Vec<String>,
@@ -308,6 +313,7 @@ impl DynamicDomainSetBackend {
         })?
     }
 
+    #[cfg(feature = "api")]
     pub(super) async fn clear_sync(&self) -> DnsResult<DynamicDomainMutation> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.sender()?
@@ -346,6 +352,7 @@ impl DynamicDomainSetBackend {
         })?
     }
 
+    #[cfg(feature = "api")]
     pub(super) fn list_rules(&self, cursor: usize, limit: usize) -> DnsResult<RulesListResponse> {
         let state = self
             .state

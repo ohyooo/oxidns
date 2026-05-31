@@ -25,13 +25,14 @@ use crate::plugin::{Plugin, PluginFactory, UninitializedPlugin};
 use crate::plugin_factory;
 use crate::proto::{Name, Question};
 
+#[cfg(feature = "api")]
 mod api;
 mod backend;
 mod config;
 mod rules;
 mod storage;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "api"))]
 mod tests;
 
 /// Provider handle registered in the plugin registry.
