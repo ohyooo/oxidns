@@ -34,8 +34,17 @@ pub async fn assemble(
     } else {
         clear_global_api();
     }
+    // A version/feature mismatch that does not stop the server from running:
+    // DNS forwarding works fine without the management API, so warn loudly and
+    // carry on instead of failing startup.
     #[cfg(not(feature = "api"))]
-    let _ = &config.api;
+    if config.api.http.is_some() {
+        tracing::warn!(
+            "api.http is configured but this build was compiled without the `api` feature; \
+             the management API (health / control / logs / config endpoints) will not start. \
+             Rebuild with --features api to enable it, or remove the api block to silence this warning."
+        );
+    }
 
     if let Some(controller) = &controller {
         plugin::set_app_controller(controller.clone());
