@@ -41,7 +41,8 @@ struct RuleState {
 
 type MutationReply = oneshot::Sender<DnsResult<DynamicDomainMutation>>;
 
-/// All file and snapshot mutations are serialized through one worker.
+/// All file, snapshot, and rule-list mutations are serialized through one
+/// worker.
 ///
 /// Append can be fire-and-forget for learned domains or request/reply for API
 /// and synchronous learning. Remove, clear, and reload always wait because they
@@ -194,28 +195,31 @@ impl DynamicDomainSetBackend {
         default_kind: DynamicDomainRuleKind,
     ) -> DnsResult<DynamicDomainMutation> {
         let rules = canonicalize_rules(raw_rules, default_kind, "append")?;
-        // Stage before enqueue so repeated DNS queries are deduplicated even
-        // while the background worker is still waiting for the next flush tick.
-        let staged = self.stage_new_rules(rules)?;
-        if staged.rules.is_empty() {
-            return Ok(staged.mutation);
+        if rules.is_empty() {
+            return Ok(DynamicDomainMutation {
+                added: 0,
+                removed: 0,
+                total: self.current_total()?,
+            });
         }
+        let queued = rules.len();
+        let total_hint = self.current_total()?.saturating_add(queued);
         let tx = self.sender()?;
-        match tx.try_send(WorkerCommand::Append {
-            rules: staged.rules.clone(),
-            wait: None,
-        }) {
-            Ok(()) => Ok(staged.mutation),
-            Err(err) => {
-                // The caller was told only about accepted staged rules, so a
-                // failed enqueue must roll the in-memory index back to keep API
-                // list output and future duplicate checks honest.
-                self.rollback_staged_rules(&staged.rules);
-                Err(DnsError::plugin(format!(
-                    "dynamic_domain_set '{}' append queue failed: {}",
-                    self.tag, err
-                )))
+        match tx.try_send(WorkerCommand::Append { rules, wait: None }) {
+            Ok(()) => {
+                // Async callers only receive an enqueue acknowledgement. The
+                // worker later computes the real added/total counts after it
+                // serializes this append against remove/clear/reload commands.
+                Ok(DynamicDomainMutation {
+                    added: queued,
+                    removed: 0,
+                    total: total_hint,
+                })
             }
+            Err(err) => Err(DnsError::plugin(format!(
+                "dynamic_domain_set '{}' append queue failed: {}",
+                self.tag, err
+            ))),
         }
     }
 
@@ -226,9 +230,12 @@ impl DynamicDomainSetBackend {
         timeout_duration: Duration,
     ) -> DnsResult<DynamicDomainMutation> {
         let rules = canonicalize_rules(raw_rules, default_kind, "append")?;
-        let staged = self.stage_new_rules(rules)?;
-        if staged.rules.is_empty() {
-            return Ok(staged.mutation);
+        if rules.is_empty() {
+            return Ok(DynamicDomainMutation {
+                added: 0,
+                removed: 0,
+                total: self.current_total()?,
+            });
         }
         // Synchronous callers use the same worker path as async learning. That
         // keeps ordering with remove/clear/reload identical while giving API
@@ -238,7 +245,7 @@ impl DynamicDomainSetBackend {
         let send_result = tokio::time::timeout(
             timeout_duration,
             tx.send(WorkerCommand::Append {
-                rules: staged.rules.clone(),
+                rules,
                 wait: Some(reply_tx),
             }),
         )
@@ -246,14 +253,12 @@ impl DynamicDomainSetBackend {
         match send_result {
             Ok(Ok(())) => {}
             Ok(Err(err)) => {
-                self.rollback_staged_rules(&staged.rules);
                 return Err(DnsError::plugin(format!(
                     "dynamic_domain_set '{}' append queue closed: {}",
                     self.tag, err
                 )));
             }
             Err(_) => {
-                self.rollback_staged_rules(&staged.rules);
                 return Err(DnsError::plugin(format!(
                     "dynamic_domain_set '{}' append timed out enqueueing work",
                     self.tag
@@ -370,6 +375,15 @@ impl DynamicDomainSetBackend {
                     self.tag
                 ))
             })
+    }
+
+    fn current_total(&self) -> DnsResult<usize> {
+        Ok(self
+            .state
+            .lock()
+            .map_err(|_| DnsError::runtime("dynamic_domain_set state lock poisoned"))?
+            .rules
+            .len())
     }
 
     fn bootstrap_file_if_needed(&self) -> DnsResult<()> {
@@ -616,10 +630,32 @@ impl DynamicDomainSetBackend {
                     match command {
                         WorkerCommand::Append { rules, wait } => {
                             let flush_now = wait.is_some();
-                            pending.push(PendingAppend { rules, wait });
-                            let pending_count: usize = pending.iter().map(|item| item.rules.len()).sum();
-                            if flush_now || pending_count >= self.config.batch_size {
-                                self.flush_appends(&mut pending);
+                            match self.stage_new_rules(rules) {
+                                Ok(staged) if staged.rules.is_empty() => {
+                                    if let Some(wait) = wait {
+                                        let _ = wait.send(Ok(staged.mutation));
+                                    }
+                                }
+                                Ok(staged) => {
+                                    pending.push(PendingAppend {
+                                        rules: staged.rules,
+                                        wait,
+                                    });
+                                    let pending_count: usize = pending.iter().map(|item| item.rules.len()).sum();
+                                    if flush_now || pending_count >= self.config.batch_size {
+                                        self.flush_appends(&mut pending);
+                                    }
+                                }
+                                Err(err) => {
+                                    warn!(
+                                        plugin = %self.tag,
+                                        error = %err,
+                                        "dynamic_domain_set append staging failed"
+                                    );
+                                    if let Some(wait) = wait {
+                                        let _ = wait.send(Err(err));
+                                    }
+                                }
                             }
                         }
                         WorkerCommand::Remove { rules, wait } => {

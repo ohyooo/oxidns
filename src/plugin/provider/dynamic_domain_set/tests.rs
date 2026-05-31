@@ -145,6 +145,34 @@ async fn dynamic_domain_set_invalid_regexp_append_does_not_poison_file() {
 }
 
 #[tokio::test]
+async fn dynamic_domain_set_async_append_is_ordered_before_clear() {
+    AppClock::start();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("learned.txt");
+    let backend = Arc::new(DynamicDomainSetBackend::new(
+        "learned".to_string(),
+        test_config_with_flush(path.clone(), 64, 60_000),
+    ));
+    backend.start().await.expect("backend should start");
+
+    backend
+        .append_rules_async(
+            vec!["Queued.Example.".to_string()],
+            DynamicDomainRuleKind::Full,
+        )
+        .expect("async append should enqueue");
+    backend.clear_sync().await.expect("clear");
+
+    let listed = serde_json::to_value(backend.list_rules(0, 10).expect("list rules"))
+        .expect("serialize list");
+    assert_eq!(listed["rules"], serde_json::json!([]));
+    assert_eq!(fs::read_to_string(&path).expect("file should exist"), "");
+    assert!(!backend.contains_name(&test_name("queued.example.")));
+
+    backend.shutdown().await.expect("shutdown");
+}
+
+#[tokio::test]
 async fn dynamic_domain_set_sync_append_flushes_without_batch_or_tick() {
     AppClock::start();
     let dir = tempfile::tempdir().expect("tempdir");
