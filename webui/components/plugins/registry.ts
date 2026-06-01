@@ -22,6 +22,7 @@ import { httpPlugin } from "./kinds/http";
 import { sequencePlugin } from "./kinds/sequence";
 import { queryRecorderPlugin } from "./kinds/query-recorder";
 import { cronPlugin } from "./kinds/cron";
+import { dynamicDomainSetPlugin } from "./kinds/dynamic-domain-set";
 
 // Optional card/detail overrides live here. If a kind is omitted or exports an
 // empty definition, the plugin center falls back to the generic templates.
@@ -51,6 +52,7 @@ export const pluginComponentRegistry: Record<
   file: filePlugin,
   prometheus: prometheusPlugin,
   http: httpPlugin,
+  dynamic_domain_set: dynamicDomainSetPlugin,
 };
 
 export function getPluginComponentDefinition(plugin: PluginInstance) {

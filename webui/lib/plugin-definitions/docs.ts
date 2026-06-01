@@ -215,6 +215,28 @@ export const pluginFieldDocs = {
   query_summary: {
     msg: '- 类型：`string`；必填：否；默认值：`"query summary"`\n- 作用：定义摘要日志标题。',
   },
+  learn_domain: {
+    provider:
+      "- 类型：`string`；必填：是；默认值：无\n- 作用：引用目标 `dynamic_domain_set` provider。\n- 约束：\n  - 必须是 `dynamic_domain_set` 类型，不能引用普通 `domain_set`。\n- 运行影响：所有学习到的规则会写入该 provider 的本地文件，并立即更新其热快照。",
+    phase:
+      "- 类型：`string`；必填：否；默认值：`after`\n- 可选值：\n  - `before`：在后续 executor 执行前，按 request question 学习。\n  - `after`：先执行后续链路，再根据响应判定是否学习。\n- 运行影响：`before` 不检查响应条件；`after` 会受 `success_only`、`answer_required` 等过滤。",
+    questions:
+      "- 类型：`string`；必填：否；默认值：`first`\n- 可选值：`first`、`all`\n- 作用：控制只学习第一个 question 还是所有 question；常规单 question 请求保持默认即可。",
+    qtypes:
+      '- 类型：`array<string>`；必填：否；默认值：`["A", "AAAA"]`\n- 作用：只对指定 DNS 查询类型生效。\n- 配置要求：使用大写记录类型，例如 `A`、`AAAA`、`HTTPS`。',
+    success_only:
+      "- 类型：`boolean`；必填：否；默认值：`true`\n- 作用：仅响应 RCODE 为 `NOERROR` 时学习。\n- 使用条件：仅 `phase: after` 生效。",
+    answer_required:
+      "- 类型：`boolean`；必填：否；默认值：`true`\n- 作用：仅响应包含 answer 记录时学习。\n- 使用条件：仅 `phase: after` 生效。",
+    rule_kind:
+      "- 类型：`string`；必填：否；默认值：`full`\n- 可选值：\n  - `full`：写入 `full:example.com` 精确规则。\n  - `domain`：写入 `domain:example.com` 后缀规则。\n- 运行影响：默认精确规则可避免意外扩大匹配范围；改为 `domain` 时整棵子域都会命中。",
+    async:
+      "- 类型：`boolean`；必填：否；默认值：`true`\n- 作用：控制是否只入队后继续执行。\n- 运行影响：\n  - `true`：写入异步入队，请求路径零等待。\n  - `false`：在当前请求路径同步等待 provider 写入完成，受 `timeout` 限制。",
+    error_mode:
+      "- 类型：`string`；必填：否；默认值：`continue`\n- 可选值：\n  - `continue`：失败仅记录日志，继续后续链路。\n  - `stop`：失败后返回 `Stop`，截断当前 sequence 分支。\n  - `fail`：失败后直接返回 executor 错误。",
+    timeout:
+      "- 类型：`duration`；必填：否；默认值：`1s`\n- 作用：限制 `async: false` 时等待 provider 写入完成的最长时间。\n- 支持单位：`ms`、`s`、`m`、`h`、`d`。",
+  },
   query_recorder: {
     path: "- 类型：`string`；必填：是\n- 作用：指定当前 recorder 的 SQLite 文件路径。",
     queue_size:
@@ -475,6 +497,17 @@ export const pluginFieldDocs = {
     files:
       "- 类型：`array`；必填：否；默认值：空数组\n- 作用：指定外部规则文件路径列表。\n- 文件要求：\n  - 每行一条规则。\n  - 空行与注释行会被忽略。\n- 运行影响：\n  - 文件内容会在初始化或 `reload_provider` 时重新读取，并编译进当前 provider 的本地 matcher。",
     sets: "- 类型：`array`；必填：否；默认值：空数组\n- 作用：引用其它具备域名匹配能力的 provider。\n- 约束：\n  - 允许引用任意具备域名匹配能力的 provider，例如 `domain_set`、`geosite`、`adguard_rule`。\n- 运行影响：\n  - 当前 provider 只保存被引用 provider 的稳定句柄，不复制其规则。\n  - 下游 provider 单独 reload 后，当前 `domain_set` 无需 reload 即可看到新结果。",
+  },
+  dynamic_domain_set: {
+    path: "- 类型：`string`；必填：是；默认值：无\n- 作用：指定该 provider 管理的本地规则文件路径。\n- 文件要求：\n  - machine-managed：由插件维护，不保留手写注释。\n  - 一行一条规则，支持 `full:`、`domain:`、`keyword:`、`regexp:` 与无前缀域名（按 `domain:` 解析）。\n  - 空行与 `#` 开头的注释行在加载时忽略。\n- 运行影响：\n  - 文件不存在时自动创建。\n  - 文件存在时会在启动和 `reload_provider` 时重新读取。\n  - 外部手工编辑文件不会被自动感知，需要手动 reload。",
+    bootstrap_rules:
+      "- 类型：`array`；必填：否；默认值：空数组\n- 作用：当 `path` 文件不存在时写入的初始规则。\n- 支持内容：`full:`、`domain:`、`keyword:`、`regexp:` 与无前缀域名。\n- 运行影响：\n  - 文件已存在时该字段不生效。\n  - 仅用于首次 bootstrap，后续追加请通过 `learn_domain` 或管理 API。",
+    queue_size:
+      "- 类型：`integer`；必填：否；默认值：`1024`\n- 配置要求：必须大于 0。\n- 作用：定义自动学习从请求路径到后台写线程的有界队列大小。\n- 运行影响：队列满时新增 append 会阻塞或被丢弃，取决于上游调用方。",
+    batch_size:
+      "- 类型：`integer`；必填：否；默认值：`256`\n- 配置要求：必须大于 0。\n- 作用：定义后台 append 的批量 flush 阈值。\n- 运行影响：值越大，单次 flush 落盘的规则越多，CPU 与磁盘开销越集中。",
+    flush_interval_ms:
+      "- 类型：`integer`；必填：否；默认值：`200`\n- 单位：毫秒\n- 配置要求：必须大于 0。\n- 作用：定义后台 append 的定时 flush 间隔。\n- 运行影响：与 `batch_size` 共同决定写盘节奏，较小值能让新规则更快可见，但落盘更频繁。",
   },
   geosite: {
     file: "- 类型：`string`；必填：是\n- 作用：指定 `geosite.dat` 文件路径。",

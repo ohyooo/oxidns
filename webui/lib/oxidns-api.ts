@@ -724,6 +724,81 @@ export async function fetchQueryRecorderTimeseries(
   return readJsonResponse<QueryRecorderTimeseriesResponse>(response);
 }
 
+// --- Dynamic Domain Set API ---
+
+export type DynamicDomainRuleKind = "full" | "domain";
+
+export interface DynamicDomainRulesResponse {
+  ok: boolean;
+  total: number;
+  next_cursor: number | null;
+  rules: string[];
+}
+
+export interface DynamicDomainMutationResponse {
+  ok: boolean;
+  added: number;
+  removed: number;
+  total: number;
+}
+
+export async function listDynamicDomainRules(
+  tag: string,
+  options: { cursor?: number; limit?: number; signal?: AbortSignal } = {},
+): Promise<DynamicDomainRulesResponse> {
+  const params = new URLSearchParams();
+  if (options.cursor !== undefined) params.set("cursor", String(options.cursor));
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const response = await fetch(
+    apiUrl(`/plugins/${encodeURIComponent(tag)}/rules${suffix}`),
+    { method: "GET", headers: apiHeaders(), signal: options.signal },
+  );
+  return readJsonResponse<DynamicDomainRulesResponse>(response);
+}
+
+export async function appendDynamicDomainRules(
+  tag: string,
+  rules: string[],
+  rule_kind?: DynamicDomainRuleKind,
+): Promise<DynamicDomainMutationResponse> {
+  const response = await fetch(
+    apiUrl(`/plugins/${encodeURIComponent(tag)}/rules`),
+    {
+      method: "POST",
+      headers: { ...apiHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ rules, rule_kind }),
+    },
+  );
+  return readJsonResponse<DynamicDomainMutationResponse>(response);
+}
+
+export async function removeDynamicDomainRules(
+  tag: string,
+  rules: string[],
+  rule_kind?: DynamicDomainRuleKind,
+): Promise<DynamicDomainMutationResponse> {
+  const response = await fetch(
+    apiUrl(`/plugins/${encodeURIComponent(tag)}/rules`),
+    {
+      method: "DELETE",
+      headers: { ...apiHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ rules, rule_kind }),
+    },
+  );
+  return readJsonResponse<DynamicDomainMutationResponse>(response);
+}
+
+export async function clearDynamicDomainRules(
+  tag: string,
+): Promise<DynamicDomainMutationResponse> {
+  const response = await fetch(
+    apiUrl(`/plugins/${encodeURIComponent(tag)}/rules/clear`),
+    { method: "POST", headers: apiHeaders() },
+  );
+  return readJsonResponse<DynamicDomainMutationResponse>(response);
+}
+
 // --- Log API ---
 
 export interface LogEntry {

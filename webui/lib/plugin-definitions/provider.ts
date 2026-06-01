@@ -52,6 +52,7 @@ export const providerPluginDefinitions: PluginKindDefinition[] = [
         label: "规则文件",
         type: "text",
         required: true,
+        fullWidth: true,
         placeholder: "/etc/oxidns/learned-allow.txt",
       },
       stringArrayField(
