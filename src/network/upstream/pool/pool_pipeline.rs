@@ -185,7 +185,7 @@ impl<C: Connection> PipelinePool<C> {
                     }
                 }
             } else {
-                tokio::time::sleep(POOL_RETRY_BACKOFF).await;
+                yield_now().await;
             }
         }
     }
