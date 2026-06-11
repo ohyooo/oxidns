@@ -42,7 +42,10 @@ use serde_yaml_ng::Value;
 use tokio::sync::{mpsc, oneshot};
 use tracing::warn;
 
-use self::api::{MikrotikApi, MikrotikRsClient};
+use self::api::{
+    DEFAULT_CONNECT_TIMEOUT_SECS, DEFAULT_RECEIVE_TIMEOUT_SECS, DEFAULT_SEND_TIMEOUT_SECS,
+    MikrotikApi, MikrotikApiTimeouts, MikrotikRsClient,
+};
 use self::manager::{
     AddressListFamily, AddressListKey, AddressListManager, AddressListManagerConfig,
     AddressListManagerRuntime, ManagerCommand, ObservedAddr,
@@ -84,6 +87,12 @@ struct MikrotikConfigArgs {
     username: Option<String>,
     /// RouterOS login password.
     password: Option<String>,
+    /// RouterOS API connection timeout in seconds.
+    connect_timeout: Option<u64>,
+    /// RouterOS API command send timeout in seconds.
+    send_timeout: Option<u64>,
+    /// RouterOS API response receive timeout in seconds.
+    receive_timeout: Option<u64>,
     /// Whether post stage waits RouterOS writes (`false`) or queues work
     /// (`true`).
     #[serde(rename = "async")]
@@ -125,6 +134,8 @@ struct MikrotikConfig {
     username: String,
     /// Login password for RouterOS API.
     password: String,
+    /// RouterOS API operation timeouts.
+    api_timeouts: MikrotikApiTimeouts,
     /// Async mode switch for post stage writes.
     async_mode: bool,
     /// IPv4 address-list name managed by this plugin.
@@ -156,6 +167,19 @@ impl MikrotikConfigArgs {
         let address = required_non_empty(self.address, "address")?;
         let username = required_non_empty(self.username, "username")?;
         let password = required_non_empty(self.password, "password")?;
+        let api_timeouts = MikrotikApiTimeouts::from_secs(
+            timeout_secs(
+                self.connect_timeout,
+                "connect_timeout",
+                DEFAULT_CONNECT_TIMEOUT_SECS,
+            )?,
+            timeout_secs(self.send_timeout, "send_timeout", DEFAULT_SEND_TIMEOUT_SECS)?,
+            timeout_secs(
+                self.receive_timeout,
+                "receive_timeout",
+                DEFAULT_RECEIVE_TIMEOUT_SECS,
+            )?,
+        );
         let address_list4 = optional_non_empty(self.address_list4);
         let address_list6 = optional_non_empty(self.address_list6);
         if address_list4.is_none() && address_list6.is_none() {
@@ -193,6 +217,7 @@ impl MikrotikConfigArgs {
             address,
             username,
             password,
+            api_timeouts,
             async_mode: self.async_mode.unwrap_or(DEFAULT_ASYNC_MODE),
             address_list4,
             address_list6,
@@ -470,6 +495,7 @@ impl PluginFactory for MikrotikFactory {
             config.address.clone(),
             config.username.clone(),
             config.password.clone(),
+            config.api_timeouts,
         )) as Arc<dyn MikrotikApi>;
 
         let manager_cfg = AddressListManagerConfig {
@@ -572,6 +598,16 @@ fn optional_non_empty(value: Option<String>) -> Option<String> {
     value
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
+}
+
+fn timeout_secs(value: Option<u64>, field: &str, default_secs: u64) -> Result<u64> {
+    match value {
+        Some(0) => Err(DnsError::plugin(format!(
+            "ros_address_list '{field}' must be greater than 0 seconds"
+        ))),
+        Some(value) => Ok(value),
+        None => Ok(default_secs),
+    }
 }
 
 #[inline]
@@ -1056,6 +1092,7 @@ mod tests {
             address: "127.0.0.1:8728".to_string(),
             username: "u".to_string(),
             password: "p".to_string(),
+            api_timeouts: MikrotikApiTimeouts::default(),
             async_mode,
             address_list4: address_list4.map(|v| v.to_string()),
             address_list6: address_list6.map(|v| v.to_string()),
@@ -1157,6 +1194,44 @@ address_list4: "oxidns_ipv4"
         .unwrap();
         let parsed = parse_plugin_config(Some(cfg), false).unwrap();
         assert_eq!(parsed.comment_prefix, DEFAULT_COMMENT_PREFIX);
+        assert_eq!(parsed.api_timeouts, MikrotikApiTimeouts::default());
+    }
+
+    #[test]
+    fn config_validation_accepts_routeros_api_timeouts() {
+        let cfg = serde_yaml_ng::from_str::<Value>(
+            r#"
+address: "1.1.1.1:8728"
+username: "user"
+password: "pass"
+connect_timeout: 10
+send_timeout: 11
+receive_timeout: 60
+address_list4: "oxidns_ipv4"
+"#,
+        )
+        .unwrap();
+        let parsed = parse_plugin_config(Some(cfg), false).unwrap();
+        assert_eq!(
+            parsed.api_timeouts,
+            MikrotikApiTimeouts::from_secs(10, 11, 60)
+        );
+    }
+
+    #[test]
+    fn config_validation_rejects_zero_routeros_api_timeout() {
+        let cfg = serde_yaml_ng::from_str::<Value>(
+            r#"
+address: "1.1.1.1:8728"
+username: "user"
+password: "pass"
+receive_timeout: 0
+address_list4: "oxidns_ipv4"
+"#,
+        )
+        .unwrap();
+        let err = parse_plugin_config(Some(cfg), false).unwrap_err();
+        assert!(err.to_string().contains("receive_timeout"));
     }
 
     #[test]
