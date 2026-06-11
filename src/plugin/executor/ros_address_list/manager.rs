@@ -23,7 +23,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{debug, warn};
 
-use super::api::MikrotikApi;
+use super::api::{MikrotikApi, RouterListEntry};
 use crate::core::app_clock::AppClock;
 use crate::core::error::{DnsError, Result};
 use crate::core::task_center;
@@ -562,12 +562,35 @@ impl AddressListManager {
             if self.persistent_items.contains(&entry.key) {
                 continue;
             }
+            if !self
+                .is_stale_persistent_entry_still_deletable(&entry)
+                .await?
+            {
+                continue;
+            }
             self.api
                 .delete_entry_by_id(&entry.id, entry.key.family)
                 .await?;
         }
 
         Ok(())
+    }
+
+    async fn is_stale_persistent_entry_still_deletable(
+        &self,
+        entry: &RouterListEntry,
+    ) -> Result<bool> {
+        let current_entries = self.api.list_entries_by_key(&entry.key).await?;
+        Ok(current_entries.into_iter().any(|current| {
+            current.id == entry.id
+                && !self.persistent_items.contains(&current.key)
+                && decode_owned_comment(
+                    self.cfg.comment_prefix.as_str(),
+                    self.cfg.plugin_tag.as_str(),
+                    current.comment.as_deref(),
+                )
+                .is_some_and(|meta| meta.kind == OwnedCommentKind::Persistent)
+        }))
     }
 
     fn spawn_background_reconcile(&mut self, tag: String) {

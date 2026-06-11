@@ -76,6 +76,8 @@ pub(super) trait MikrotikApi: Debug + Send + Sync {
         list4: Option<&str>,
         list6: Option<&str>,
     ) -> Result<Vec<RouterListEntry>>;
+    /// List entries matching one exact normalized key.
+    async fn list_entries_by_key(&self, key: &AddressListKey) -> Result<Vec<RouterListEntry>>;
     /// Upsert one plugin-owned address-list entry.
     ///
     /// Returning `Ok(None)` means a foreign entry already occupies the same
@@ -412,6 +414,10 @@ impl MikrotikApi for MikrotikRsClient {
         }
 
         Ok(entries)
+    }
+
+    async fn list_entries_by_key(&self, key: &AddressListKey) -> Result<Vec<RouterListEntry>> {
+        self.find_entries_by_key(key).await
     }
 
     async fn upsert_owned_entry(

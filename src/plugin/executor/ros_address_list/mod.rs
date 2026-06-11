@@ -795,6 +795,7 @@ mod tests {
         fail_next_upsert: bool,
         fail_healthcheck: bool,
         list_entries_delay: Option<Duration>,
+        convert_persistent_to_dynamic_after_list: bool,
         upsert_v4: u64,
         upsert_v6: u64,
         update_ops: u64,
@@ -852,13 +853,48 @@ mod tests {
                 .state
                 .lock()
                 .map_err(|_| DnsError::plugin("mock api lock poisoned"))?;
-            Ok(state
+            let entries = state
                 .entries
                 .values()
                 .filter(|entry| match entry.key.family {
                     AddressListFamily::Ipv4 => list4 == Some(entry.key.list.as_str()),
                     AddressListFamily::Ipv6 => list6 == Some(entry.key.list.as_str()),
                 })
+                .cloned()
+                .collect::<Vec<_>>();
+            drop(state);
+
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| DnsError::plugin("mock api lock poisoned"))?;
+            if state.convert_persistent_to_dynamic_after_list {
+                state.convert_persistent_to_dynamic_after_list = false;
+                if let Some(entry) = state.entries.values_mut().find(|entry| {
+                    decode_owned_comment("oxidns", "mk", entry.comment.as_deref())
+                        .is_some_and(|meta| meta.kind == OwnedCommentKind::Persistent)
+                }) {
+                    entry.comment = Some(encode_comment(
+                        "oxidns",
+                        "mk",
+                        OwnedCommentKind::Dynamic,
+                        Some("race.example"),
+                    ));
+                }
+            }
+
+            Ok(entries)
+        }
+
+        async fn list_entries_by_key(&self, key: &AddressListKey) -> Result<Vec<RouterListEntry>> {
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| DnsError::plugin("mock api lock poisoned"))?;
+            Ok(state
+                .entries
+                .values()
+                .filter(|entry| entry.key == *key)
                 .cloned()
                 .collect())
         }
@@ -1429,6 +1465,43 @@ persistent:
                 .values()
                 .all(|entry| entry.key.address == IpAddr::V4(Ipv4Addr::new(100, 64, 3, 0)))
         );
+    }
+
+    #[tokio::test]
+    async fn reconcile_revalidates_stale_persistent_before_delete() {
+        let api = Arc::new(MockMikrotikApi::default());
+        let key = AddressListKey::new(
+            IpAddr::V4(Ipv4Addr::new(15, 15, 15, 15)),
+            "oxidns_ipv4".to_string(),
+        );
+        api.seed_entry(RouterListEntry {
+            id: "*401".to_string(),
+            key: key.clone(),
+            timeout: None,
+            comment: Some(encode_comment(
+                "oxidns",
+                "mk",
+                OwnedCommentKind::Persistent,
+                None,
+            )),
+        });
+        {
+            let mut state = api.state.lock().unwrap();
+            state.convert_persistent_to_dynamic_after_list = true;
+        }
+
+        let mut manager = AddressListManager::new(api.clone(), default_cfg("mk"));
+        manager.reconcile().await.unwrap();
+
+        let state = api.state.lock().unwrap();
+        let entry = state
+            .entries
+            .get(&MockMikrotikApi::storage_key(&key))
+            .unwrap();
+        let meta = decode_owned_comment("oxidns", "mk", entry.comment.as_deref()).unwrap();
+        assert_eq!(entry.id, "*401");
+        assert_eq!(entry.timeout, None);
+        assert_eq!(meta.kind, OwnedCommentKind::Dynamic);
     }
 
     #[tokio::test]
