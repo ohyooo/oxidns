@@ -224,6 +224,7 @@ pub fn build_dns_get_request(mut uri: String, buf: &[u8], version: Version) -> R
     http::Request::builder()
         .version(version)
         .header(header::CONTENT_TYPE, DNS_HEADER_VALUE)
+        .header(header::ACCEPT, DNS_HEADER_VALUE)
         .method(Method::GET)
         .uri(uri)
         .body(())
