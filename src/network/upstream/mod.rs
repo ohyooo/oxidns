@@ -58,13 +58,17 @@ use crate::network::upstream::pool::conn_tcp::{TcpConnection, TcpConnectionBuild
 use crate::network::upstream::pool::conn_udp::{UdpConnection, UdpConnectionBuilder};
 use crate::network::upstream::pool::pool_pipeline::PipelinePool;
 use crate::network::upstream::pool::pool_reuse::ReusePool;
-use crate::network::upstream::pool::{Connection, ConnectionBuilder, ConnectionPool};
+use crate::network::upstream::pool::{
+    Connection, ConnectionBuilder, ConnectionPool, QueryTimeoutPolicy,
+};
 use crate::network::upstream::utils::try_lookup_server_name;
 use crate::proto::Message;
 
 mod bootstrap;
 mod pool;
 mod utils;
+
+pub use pool::QueryDeadline;
 
 /// Supported upstream connection types
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -274,18 +278,15 @@ pub struct UpstreamConfig {
 pub trait Upstream: Send + Sync + Debug {
     /// **Internal API - Do not call directly!**
     ///
-    /// Send a DNS query without timeout protection.
-    /// This method is called internally by `query()` which adds timeout
-    /// handling.
+    /// Send a DNS query using the provided end-to-end query deadline.
     ///
     /// # For Implementors
     /// Implement this method to provide the actual DNS query logic.
     ///
     /// # For Callers
-    /// **Always use `query()` instead!** Calling this method directly bypasses
-    /// timeout protection and is considered a bug.
+    /// **Always use `query()` or `query_with_deadline()` instead!**
     #[doc(hidden)]
-    async fn inner_query(&self, request: Message) -> Result<Message>;
+    async fn inner_query(&self, request: Message, deadline: QueryDeadline) -> Result<Message>;
 
     /// Return the connection configuration information
     ///
@@ -310,7 +311,23 @@ pub trait Upstream: Send + Sync + Debug {
         self.connection_info().connection_type
     }
 
-    /// Send a DNS query with unified timeout handling
+    /// Send a DNS query with an existing upstream deadline.
+    async fn query_with_deadline(
+        &self,
+        message: Message,
+        deadline: QueryDeadline,
+    ) -> Result<Message> {
+        if deadline.remaining().is_none() {
+            warn!(
+                timeout_secs = self.timeout().as_secs_f64(),
+                "Upstream DNS query timeout"
+            );
+            return Err(deadline.timeout_error());
+        }
+        self.inner_query(message, deadline).await
+    }
+
+    /// Send a DNS query with unified deadline handling
     ///
     /// This is the **recommended API** for all DNS queries.
     /// Automatically applies timeout based on `timeout()` configuration.
@@ -325,34 +342,8 @@ pub trait Upstream: Send + Sync + Debug {
     /// - Returns `DnsError::plugin` on timeout
     /// - Returns upstream-specific errors on query failures
     async fn query(&self, message: Message) -> Result<Message> {
-        let timeout_duration = self.timeout();
-
-        // Apply timeout wrapper to the inner query
-        // This ensures all upstream queries have consistent timeout behavior
-        match tokio::time::timeout(timeout_duration, self.inner_query(message)).await {
-            // Success: query completed within timeout
-            Ok(Ok(response)) => Ok(response),
-
-            // Error: query failed (network error, invalid response, etc.)
-            Ok(Err(e)) => Err(e),
-
-            // Timeout: query took too long
-            Err(_) => {
-                // Log timeout event for monitoring and debugging
-                // Uses structured logging (zero-copy) instead of format! for performance
-                warn!(
-                    timeout_secs = timeout_duration.as_secs_f64(),
-                    "Upstream DNS query timeout"
-                );
-
-                // Return timeout error
-                // Note: format! only happens on timeout (rare case), acceptable overhead
-                Err(DnsError::plugin(format!(
-                    "DNS query timeout after {:?}",
-                    timeout_duration
-                )))
-            }
-        }
+        let deadline = QueryDeadline::new(self.timeout());
+        self.query_with_deadline(message, deadline).await
     }
 }
 
@@ -717,6 +708,8 @@ impl UpstreamBuilder {
                         ConnectionInfo::DEFAULT_MAX_CONNS_LOAD,
                         connection_info.idle_timeout,
                         Box::new(builder),
+                        QueryTimeoutPolicy::Reuse,
+                        connection_info.timeout,
                     );
 
                     let tcp_builder =
@@ -728,6 +721,8 @@ impl UpstreamBuilder {
                             .unwrap_or(ConnectionInfo::DEFAULT_MAX_CONNS_SIZE),
                         connection_info.idle_timeout,
                         Box::new(tcp_builder),
+                        QueryTimeoutPolicy::Close,
+                        connection_info.timeout,
                     );
 
                     Box::new(UdpTruncatedUpstream {
@@ -923,6 +918,7 @@ fn create_pipeline_pool<C: Connection>(
     connection_info: ConnectionInfo,
     builder: Box<dyn ConnectionBuilder<C>>,
 ) -> Box<dyn Upstream> {
+    let timeout = connection_info.timeout;
     Box::new(PooledUpstream::<C> {
         pool: PipelinePool::new(
             min_size,
@@ -932,6 +928,8 @@ fn create_pipeline_pool<C: Connection>(
             ConnectionInfo::DEFAULT_MAX_CONNS_LOAD,
             connection_info.idle_timeout,
             builder,
+            QueryTimeoutPolicy::Retire,
+            timeout,
         ),
         connection_info,
     })
@@ -942,6 +940,7 @@ fn create_reuse_pool<C: Connection>(
     connection_info: ConnectionInfo,
     builder: Box<dyn ConnectionBuilder<C>>,
 ) -> Box<dyn Upstream> {
+    let timeout = connection_info.timeout;
     Box::new(PooledUpstream::<C> {
         pool: ReusePool::new(
             min_size,
@@ -950,6 +949,8 @@ fn create_reuse_pool<C: Connection>(
                 .unwrap_or(ConnectionInfo::DEFAULT_MAX_CONNS_SIZE),
             connection_info.idle_timeout,
             builder,
+            QueryTimeoutPolicy::Close,
+            timeout,
         ),
         connection_info,
     })
@@ -976,8 +977,8 @@ impl<C: Connection> Upstream for PooledUpstream<C> {
     /// The pool handles connection selection, creation, and lifecycle
     /// management. No additional logging here as the pool layer already
     /// logs connection events.
-    async fn inner_query(&self, request: Message) -> Result<Message> {
-        self.pool.query(request).await
+    async fn inner_query(&self, request: Message, deadline: QueryDeadline) -> Result<Message> {
+        self.pool.query(request, deadline).await
     }
 
     fn connection_info(&self) -> &ConnectionInfo {
@@ -1007,9 +1008,9 @@ struct UdpTruncatedUpstream {
 
 #[async_trait]
 impl Upstream for UdpTruncatedUpstream {
-    async fn inner_query(&self, request: Message) -> Result<Message> {
+    async fn inner_query(&self, request: Message, deadline: QueryDeadline) -> Result<Message> {
         // Try UDP first (most DNS queries fit in UDP packets)
-        let response = self.main_pool.query(request.clone()).await?;
+        let response = self.main_pool.query(request.clone(), deadline).await?;
 
         // Check if response was truncated (TC bit set)
         if response.truncated() {
@@ -1017,7 +1018,7 @@ impl Upstream for UdpTruncatedUpstream {
             debug!("UDP response truncated, falling back to TCP");
 
             // Retry over TCP to get the full response
-            self.fallback_pool.query(request).await
+            self.fallback_pool.query(request, deadline).await
         } else {
             // UDP response was complete, return it
             Ok(response)
@@ -1204,6 +1205,8 @@ impl<C: Connection> BootstrapUpstream<C> {
             1,
             ConnectionInfo::DEFAULT_CONN_IDLE_TIME,
             Box::new(DummyConnectionBuilder {}),
+            QueryTimeoutPolicy::Close,
+            connection_info.timeout,
         );
 
         let conn_info = connection_info.clone();
@@ -1228,13 +1231,13 @@ impl<C: Connection> BootstrapUpstream<C> {
     /// - Fast path: single atomic load when IP hasn't changed
     /// - Pool recreation only happens on IP change (rare)
     /// - No locks or blocking operations
-    async fn init_pool_if_needed(&self) -> Result<()> {
+    async fn init_pool_if_needed(&self, deadline: QueryDeadline) -> Result<()> {
         // Fast path: atomically load current pool state (lock-free)
         let guard = &(*self.pool.load());
         let pool_ip = guard.0;
 
         // Resolve domain name via bootstrap (cached in Bootstrap with TTL)
-        let ip = match self.bootstrap.get().await {
+        let ip = match self.bootstrap.get_with_deadline(deadline).await {
             Ok(value) => value,
             Err(value) => return Err(value),
         };
@@ -1286,6 +1289,8 @@ impl<C: Connection> BootstrapUpstream<C> {
                 ConnectionInfo::DEFAULT_MAX_CONNS_LOAD,
                 ConnectionInfo::DEFAULT_CONN_IDLE_TIME,
                 builder,
+                QueryTimeoutPolicy::Reuse,
+                self.connection_info.timeout,
             ),
             ConnectionType::TCP | ConnectionType::DoT => {
                 if self.connection_info.enable_pipeline.unwrap_or(false) {
@@ -1295,9 +1300,18 @@ impl<C: Connection> BootstrapUpstream<C> {
                         ConnectionInfo::DEFAULT_MAX_CONNS_LOAD,
                         ConnectionInfo::DEFAULT_CONN_IDLE_TIME,
                         builder,
+                        QueryTimeoutPolicy::Retire,
+                        self.connection_info.timeout,
                     )
                 } else {
-                    ReusePool::new(0, 1, ConnectionInfo::DEFAULT_CONN_IDLE_TIME, builder)
+                    ReusePool::new(
+                        0,
+                        1,
+                        ConnectionInfo::DEFAULT_CONN_IDLE_TIME,
+                        builder,
+                        QueryTimeoutPolicy::Close,
+                        self.connection_info.timeout,
+                    )
                 }
             }
             ConnectionType::DoQ | ConnectionType::DoH => PipelinePool::new(
@@ -1306,6 +1320,8 @@ impl<C: Connection> BootstrapUpstream<C> {
                 ConnectionInfo::DEFAULT_MAX_CONNS_LOAD,
                 ConnectionInfo::DEFAULT_CONN_IDLE_TIME,
                 builder,
+                QueryTimeoutPolicy::Retire,
+                self.connection_info.timeout,
             ),
         };
 
@@ -1330,17 +1346,17 @@ impl<C: Connection> Upstream for BootstrapUpstream<C> {
     /// - Hot path: pool already initialized, just forward query
     /// - Cold path: bootstrap resolution + pool creation (first query only)
     /// - IP change: new pool creation (rare, based on DNS TTL)
-    async fn inner_query(&self, request: Message) -> Result<Message> {
+    async fn inner_query(&self, request: Message, deadline: QueryDeadline) -> Result<Message> {
         // Ensure connection pool is initialized with current IP
         // Fast path: just checks atomic, no allocation
         // Slow path: resolves DNS + creates pool (only on first query or IP change)
-        self.init_pool_if_needed().await?;
+        self.init_pool_if_needed(deadline).await?;
 
         // Get current connection pool (lock-free atomic load)
         let pool = &*self.pool.load();
 
         // Forward query through the pool
-        pool.1.query(request).await
+        pool.1.query(request, deadline).await
     }
 
     fn connection_info(&self) -> &ConnectionInfo {
@@ -1358,7 +1374,7 @@ struct DummyConnectionBuilder {}
 
 #[async_trait]
 impl<C: Connection> ConnectionBuilder<C> for DummyConnectionBuilder {
-    async fn create_connection(&self, _conn_id: u16) -> Result<Arc<C>> {
+    async fn create_connection(&self, _conn_id: u16, _deadline: QueryDeadline) -> Result<Arc<C>> {
         Err(DnsError::protocol(
             "DummyConnectionBuilder cannot create connections (pool not yet initialized)",
         ))

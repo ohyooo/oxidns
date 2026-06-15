@@ -739,6 +739,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::network::upstream::QueryDeadline;
     use crate::proto::{Name, Question, Rcode, RecordType};
 
     #[derive(Debug)]
@@ -777,7 +778,7 @@ mod tests {
 
     #[async_trait]
     impl Upstream for MockUpstream {
-        async fn inner_query(&self, request: Message) -> Result<Message> {
+        async fn inner_query(&self, request: Message, _deadline: QueryDeadline) -> Result<Message> {
             if !self.delay.is_zero() {
                 tokio::time::sleep(self.delay).await;
             }

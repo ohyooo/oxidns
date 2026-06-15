@@ -22,6 +22,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::core::app_clock::AppClock;
 use crate::core::error::{DnsError, Result};
+use crate::network::upstream::pool::{DeadlineOutcome, QueryDeadline};
 use crate::network::upstream::{ConnectionInfo, Upstream, UpstreamBuilder};
 use crate::proto::{DNSClass, Message, MessageType, Name, Opcode, Question, RecordType};
 
@@ -136,10 +137,14 @@ impl Bootstrap {
     /// - Only one concurrent query at a time (others wait for result)
     /// - Automatic retry on transient failures
     #[inline]
-    pub async fn get(&self) -> Result<IpAddr> {
+    pub async fn get_with_deadline(&self, deadline: QueryDeadline) -> Result<IpAddr> {
         let mut failed_count = 0;
 
         loop {
+            if deadline.remaining().is_none() {
+                return Err(deadline.timeout_error());
+            }
+
             // Fast path: atomic load without locking (most common case)
             let state = self.state.load(Ordering::Acquire);
 
@@ -174,7 +179,7 @@ impl Bootstrap {
                         continue;
                     }
                     // Someone else is already refreshing, wait for result
-                    self.query_done.notified().await;
+                    self.wait_query_done(deadline).await?;
                 }
                 STATE_NONE => {
                     // Try to acquire query permission
@@ -189,15 +194,17 @@ impl Bootstrap {
                         .is_ok()
                     {
                         // We won the race, perform the query
-                        self.query().await;
+                        let mut query_guard = BootstrapQueryGuard::new(self);
+                        self.query(deadline).await;
+                        query_guard.disarm();
                         continue;
                     }
                     // Someone else is querying, wait for result
-                    self.query_done.notified().await;
+                    self.wait_query_done(deadline).await?;
                 }
                 STATE_QUERYING => {
                     // Wait for query to complete
-                    self.query_done.notified().await;
+                    self.wait_query_done(deadline).await?;
                 }
                 STATE_FAILED => {
                     // Limit retry attempts to prevent infinite loops
@@ -222,10 +229,17 @@ impl Bootstrap {
                     {
                         continue;
                     }
-                    self.query_done.notified().await;
+                    self.wait_query_done(deadline).await?;
                 }
                 _ => unreachable!("Invalid bootstrap state"),
             }
+        }
+    }
+
+    async fn wait_query_done(&self, deadline: QueryDeadline) -> Result<()> {
+        match deadline.run(self.query_done.notified()).await {
+            DeadlineOutcome::Completed(()) => Ok(()),
+            DeadlineOutcome::Expired => Err(deadline.timeout_error()),
         }
     }
 
@@ -241,12 +255,12 @@ impl Bootstrap {
     /// # Concurrency
     /// This method is called by only one task at a time (enforced by state
     /// machine). Other tasks wait via `query_done` notification.
-    async fn query(&self) {
+    async fn query(&self, deadline: QueryDeadline) {
         // Execute DNS query using pre-built message template
         // Randomize query ID to prevent response spoofing
         let mut message = self.message.clone();
         message.set_id(random());
-        match self.upstream.query(message).await {
+        match self.upstream.query_with_deadline(message, deadline).await {
             Ok(response) => {
                 for answer in response.answers() {
                     if let Some(ip) = answer.ip_addr() {
@@ -316,9 +330,67 @@ impl Bootstrap {
     }
 }
 
+struct BootstrapQueryGuard<'a> {
+    bootstrap: &'a Bootstrap,
+    armed: bool,
+}
+
+impl<'a> BootstrapQueryGuard<'a> {
+    fn new(bootstrap: &'a Bootstrap) -> Self {
+        Self {
+            bootstrap,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for BootstrapQueryGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.bootstrap.state.store(STATE_FAILED, Ordering::Release);
+            self.bootstrap.query_done.notify_waiters();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::future::pending;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use async_trait::async_trait;
+    use tokio::sync::oneshot;
+
     use super::*;
+
+    #[derive(Debug)]
+    struct BlockingUpstream {
+        started: Mutex<Option<oneshot::Sender<()>>>,
+        connection_info: ConnectionInfo,
+    }
+
+    #[async_trait]
+    impl Upstream for BlockingUpstream {
+        async fn inner_query(
+            &self,
+            _request: Message,
+            _deadline: QueryDeadline,
+        ) -> Result<Message> {
+            if let Some(started) = self.started.lock().expect("started lock poisoned").take() {
+                let _ = started.send(());
+            }
+            pending::<Result<Message>>().await
+        }
+
+        fn connection_info(&self) -> &ConnectionInfo {
+            &self.connection_info
+        }
+    }
 
     #[tokio::test]
     async fn test_new_builds_ipv4_query_by_default() {
@@ -360,5 +432,41 @@ mod tests {
         let result = Bootstrap::new("udp://127.0.0.1:notaport", "example.com.", None);
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_canceled_bootstrap_query_releases_querying_state() {
+        AppClock::start();
+        let (started_tx, started_rx) = oneshot::channel();
+        let bootstrap = Arc::new(Bootstrap {
+            upstream: Box::new(BlockingUpstream {
+                started: Mutex::new(Some(started_tx)),
+                connection_info: ConnectionInfo::with_addr("udp://127.0.0.1:53")
+                    .expect("connection info should parse"),
+            }),
+            state: AtomicU8::new(STATE_NONE),
+            cache: RwLock::new(None),
+            query_done: Notify::new(),
+            message: Message::new(),
+            domain: "example.com.".to_string(),
+        });
+
+        let task_bootstrap = bootstrap.clone();
+        let handle = tokio::spawn(async move {
+            task_bootstrap
+                .get_with_deadline(QueryDeadline::new(Duration::from_secs(5)))
+                .await
+        });
+
+        started_rx.await.expect("bootstrap query should start");
+        handle.abort();
+        assert!(
+            handle
+                .await
+                .expect_err("bootstrap task should be cancelled")
+                .is_cancelled()
+        );
+
+        assert_eq!(bootstrap.state.load(Ordering::Acquire), STATE_FAILED);
     }
 }

@@ -54,7 +54,7 @@ use crate::core::error::{DnsError, Result};
 #[cfg(feature = "_tls-client")]
 use crate::network::tls_config::{insecure_client_config, secure_client_config};
 use crate::network::upstream::Socks5Opt;
-use crate::network::upstream::pool::Connection;
+use crate::network::upstream::pool::{Connection, DeadlineOutcome, QueryDeadline};
 #[cfg(feature = "_http-client")]
 use crate::network::upstream::{ConnectionInfo, ConnectionType};
 
@@ -628,6 +628,31 @@ pub async fn connect_stream(
     }
 }
 
+pub async fn connect_stream_with_deadline(
+    remote_ip: Option<IpAddr>,
+    server_name: String,
+    port: u16,
+    so_mark: Option<u32>,
+    bind_to_device: Option<String>,
+    socks5_opt: Option<Socks5Opt>,
+    deadline: QueryDeadline,
+) -> Result<TcpStream> {
+    match deadline
+        .run(connect_stream(
+            remote_ip,
+            server_name,
+            port,
+            so_mark,
+            bind_to_device,
+            socks5_opt,
+        ))
+        .await
+    {
+        DeadlineOutcome::Completed(result) => result,
+        DeadlineOutcome::Expired => Err(deadline.timeout_error()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -637,6 +662,7 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::*;
+    use crate::network::upstream::QueryDeadline;
     use crate::proto::Message;
 
     #[derive(Debug)]
@@ -665,7 +691,7 @@ mod tests {
             self.closed.store(true, Ordering::Relaxed);
         }
 
-        async fn query(&self, request: Message) -> Result<Message> {
+        async fn query(&self, request: Message, _deadline: QueryDeadline) -> Result<Message> {
             Ok(request)
         }
 

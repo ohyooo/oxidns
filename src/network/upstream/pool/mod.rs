@@ -35,6 +35,7 @@
 //! - Connection reuse to amortize handshake costs
 
 use std::fmt::Debug;
+use std::future::Future;
 use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
@@ -42,7 +43,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio::task::yield_now;
 
-use crate::core::error::Result;
+use crate::core::app_clock::AppClock;
+use crate::core::error::{DnsError, Result};
 use crate::core::task_center;
 use crate::proto::Message;
 
@@ -59,6 +61,83 @@ pub(crate) mod conn_udp;
 pub(crate) mod pool_pipeline;
 pub(crate) mod pool_reuse;
 
+/// Outcome of running a future under a query deadline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeadlineOutcome<T> {
+    Completed(T),
+    Expired,
+}
+
+/// Per-query upstream deadline measured by the process-wide application clock.
+///
+/// The deadline is intentionally based on `AppClock::elapsed_millis()` so the
+/// whole upstream path, including bootstrap, pool acquisition, connection
+/// expansion, handshakes, and DNS I/O, shares one monotonic budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueryDeadline {
+    pub started_at_ms: u64,
+    pub expires_at_ms: u64,
+}
+
+impl QueryDeadline {
+    pub fn new(timeout: Duration) -> Self {
+        let started_at_ms = AppClock::elapsed_millis();
+        let timeout_ms = duration_millis_u64(timeout);
+        Self {
+            started_at_ms,
+            expires_at_ms: started_at_ms.saturating_add(timeout_ms),
+        }
+    }
+
+    pub fn remaining(&self) -> Option<Duration> {
+        let now = AppClock::elapsed_millis();
+        if now >= self.expires_at_ms {
+            None
+        } else {
+            Some(Duration::from_millis(self.expires_at_ms - now))
+        }
+    }
+
+    pub async fn run<F, T>(&self, fut: F) -> DeadlineOutcome<T>
+    where
+        F: Future<Output = T>,
+    {
+        let Some(remaining) = self.remaining() else {
+            return DeadlineOutcome::Expired;
+        };
+
+        match tokio::time::timeout(remaining, fut).await {
+            Ok(value) => DeadlineOutcome::Completed(value),
+            Err(_) => DeadlineOutcome::Expired,
+        }
+    }
+
+    pub fn timeout_error(&self) -> DnsError {
+        DnsError::plugin(format!(
+            "DNS query timeout after {:?}",
+            Duration::from_millis(self.expires_at_ms.saturating_sub(self.started_at_ms))
+        ))
+    }
+}
+
+fn duration_millis_u64(duration: Duration) -> u64 {
+    if duration.is_zero() {
+        return 0;
+    }
+    duration.as_millis().try_into().unwrap_or(u64::MAX).max(1)
+}
+
+/// Pool-owned policy for handling a single query timeout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryTimeoutPolicy {
+    /// The connection can be reused after an ordinary query timeout.
+    Reuse,
+    /// Stop new acquisitions and close after existing in-flight work drains.
+    Retire,
+    /// Close immediately and release pool capacity.
+    Close,
+}
+
 /// Connection trait - represents a single persistent connection to an upstream
 /// DNS server
 ///
@@ -74,7 +153,7 @@ pub trait Connection: Send + Sized + Debug + Sync + 'static {
     /// Send a DNS query and asynchronously wait for the response
     ///
     /// This is a hot path - implementations should minimize overhead
-    async fn query(&self, request: Message) -> Result<Message>;
+    async fn query(&self, request: Message, deadline: QueryDeadline) -> Result<Message>;
 
     /// Get the number of queries currently in flight on this connection
     ///
@@ -107,7 +186,7 @@ pub trait ConnectionBuilder<C: Connection>: Send + Sync + Debug + 'static {
     /// # Returns
     /// Arc-wrapped connection on success, or error if connection establishment
     /// fails
-    async fn create_connection(&self, conn_id: u16) -> Result<Arc<C>>;
+    async fn create_connection(&self, conn_id: u16, deadline: QueryDeadline) -> Result<Arc<C>>;
 }
 
 /// Connection pool trait - manages a pool of connections for load balancing
@@ -121,7 +200,7 @@ pub trait ConnectionPool<C: Connection>: Send + Sync + Debug + 'static {
     ///
     /// The pool automatically selects or creates an appropriate connection.
     /// This is the main hot path for DNS queries.
-    async fn query(&self, request: Message) -> Result<Message>;
+    async fn query(&self, request: Message, deadline: QueryDeadline) -> Result<Message>;
 
     /// Perform maintenance on the pool
     ///
@@ -193,4 +272,37 @@ where
         .maintenance_task_id()
         .lock()
         .expect("maintenance_task_id poisoned") = Some(task_id);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn query_deadline_remaining_decreases_and_expires() {
+        AppClock::start();
+        let deadline = QueryDeadline::new(Duration::from_millis(20));
+
+        let first = deadline
+            .remaining()
+            .expect("deadline should have initial remaining time");
+        std::thread::sleep(Duration::from_millis(30));
+
+        assert!(first <= Duration::from_millis(20));
+        assert!(deadline.remaining().is_none());
+    }
+
+    #[tokio::test]
+    async fn query_deadline_run_returns_expired() {
+        AppClock::start();
+        let deadline = QueryDeadline::new(Duration::from_millis(10));
+
+        let outcome = deadline
+            .run(tokio::time::sleep(Duration::from_millis(60)))
+            .await;
+
+        assert!(matches!(outcome, DeadlineOutcome::Expired));
+    }
 }
