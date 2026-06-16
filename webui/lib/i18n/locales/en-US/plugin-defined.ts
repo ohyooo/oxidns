@@ -353,7 +353,7 @@ export const enUSPluginDefined = {
         "upstreams[].bootstrap": {
           label: "Bootstrap",
           description:
-            "Provides a boot resolution server for domain name upstreams; if not configured, system resolution will be used when establishing a connection for the first time; if configured together with dial_addr, it will be ignored.",
+            "Provides a bootstrap resolver for domain-based upstreams. Must be IP:port; if omitted, system resolution is used on first connection; ignored when dial_addr is also configured.",
           placeholder: "8.8.8.8:53",
         },
         "upstreams[].bootstrap_version": {
@@ -377,8 +377,15 @@ export const enUSPluginDefined = {
         },
         "upstreams[].max_conns": {
           label: "Maximum number of connections",
-          description: "Define the upper limit of connection pool connections.",
+          description:
+            "Define the upper limit of connection pool connections, in the range 1..4096.",
           placeholder: "256",
+        },
+        "upstreams[].min_conns": {
+          label: "Minimum number of connections",
+          description:
+            "Define the minimum warmed connection count kept by the pool. Default is 0, range is 0..4096, and it must not exceed max_conns.",
+          placeholder: "0",
         },
         "upstreams[].insecure_skip_verify": {
           label: "Skip TLS check",

@@ -166,6 +166,7 @@ Sends DNS queries to upstreams.
         bootstrap_version: 4
         port: 443
         idle_timeout: 30
+        min_conns: 2
         max_conns: 256
         timeout: 5s
         enable_pipeline: false
@@ -179,6 +180,7 @@ Sends DNS queries to upstreams.
         dial_addr: "203.0.113.53"
         socks5: "user:pass@127.0.0.1:1080"
         idle_timeout: 60
+        min_conns: 1
         max_conns: 128
         insecure_skip_verify: false
         timeout: 4s
@@ -249,7 +251,7 @@ Sends DNS queries to upstreams.
 
 - Type: `string`; Required: no
 - Purpose: Bootstrap resolver for domain-based upstreams.
-- Notes: Use an `IP:port` address. With bootstrap enabled, OxiDNS resolves the upstream hostname through that resolver and caches it according to DNS TTL. Ignored when `dial_addr` is also configured.
+- Notes: Must use an `IP:port` address. With bootstrap enabled, OxiDNS resolves the upstream hostname through that resolver and caches it according to DNS TTL. Ignored when `dial_addr` is also configured.
 
 #### `upstreams[].bootstrap_version`
 
@@ -275,6 +277,14 @@ Sends DNS queries to upstreams.
 
 - Type: `integer`; Required: no; Default: `64`
 - Purpose: Maximum pooled connections.
+- Range: `1..4096`
+
+#### `upstreams[].min_conns`
+
+- Type: `integer`; Required: no; Default: `0`
+- Purpose: Minimum warmed connections kept by the pool.
+- Range: `0..4096`, and it must not exceed the upstream's effective `max_conns`.
+- Notes: When omitted, connections remain lazy and are not pre-created when the pool is created.
 
 #### `upstreams[].insecure_skip_verify`
 

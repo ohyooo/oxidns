@@ -173,6 +173,7 @@ import Admonition from "@theme/Admonition";
         bootstrap_version: 4
         port: 443
         idle_timeout: 30
+        min_conns: 2
         max_conns: 256
         timeout: 5s
         enable_pipeline: false
@@ -186,6 +187,7 @@ import Admonition from "@theme/Admonition";
         dial_addr: "203.0.113.53"
         socks5: "user:pass@127.0.0.1:1080"
         idle_timeout: 60
+        min_conns: 1
         max_conns: 128
         insecure_skip_verify: false
         timeout: 4s
@@ -317,7 +319,16 @@ import Admonition from "@theme/Admonition";
 
 - 类型：`integer`；必填：否；默认值：`64`
 - 作用：定义连接池连接上限。
+- 取值范围：`1..4096`
 - 示例：`max_conns: 256`
+
+#### `upstreams[].min_conns`
+
+- 类型：`integer`；必填：否；默认值：`0`
+- 作用：定义连接池保持预热的最小连接数。
+- 取值范围：`0..4096`，且不能大于当前上游的有效 `max_conns`。
+- 说明：未配置时保持懒加载，不会在启动或 pool 创建时主动预建连接。
+- 示例：`min_conns: 2`
 
 #### `upstreams[].insecure_skip_verify`
 

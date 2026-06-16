@@ -314,7 +314,7 @@ export const zhCNPluginDefined = {
         "upstreams[].bootstrap": {
           label: "Bootstrap",
           description:
-            "为域名型上游提供引导解析服务器；未配置时会在首次建连时使用系统解析；与 dial_addr 同时配置时会被忽略。",
+            "为域名型上游提供引导解析服务器，必须写为 IP:port；未配置时会在首次建连时使用系统解析；与 dial_addr 同时配置时会被忽略。",
           placeholder: "8.8.8.8:53",
         },
         "upstreams[].bootstrap_version": {
@@ -337,8 +337,14 @@ export const zhCNPluginDefined = {
         },
         "upstreams[].max_conns": {
           label: "最大连接数",
-          description: "定义连接池连接上限。",
+          description: "定义连接池连接上限，范围 1..4096。",
           placeholder: "256",
+        },
+        "upstreams[].min_conns": {
+          label: "最小连接数",
+          description:
+            "定义连接池最小预热连接数，默认 0，范围 0..4096，且不能大于 max_conns。",
+          placeholder: "0",
         },
         "upstreams[].insecure_skip_verify": {
           label: "跳过 TLS 校验",
