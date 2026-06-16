@@ -584,6 +584,8 @@ Common fields:
   - IPv6 must use `[addr]:port`.
 - `idle_timeout`
   - Idle connection timeout in seconds.
+- `min_conns`
+  - Minimum warmed pool connections. Default: `0`; range: `0..4096`; must not exceed `max_conns`.
 - `max_conns`
   - Maximum pool size, in the range `1..4096`.
 - `insecure_skip_verify`

@@ -598,6 +598,7 @@ fn make_default_upstream_config(addr: String) -> UpstreamConfig {
         socks5: None,
         idle_timeout: None,
         max_conns: None,
+        min_conns: None,
         insecure_skip_verify: None,
         timeout: None,
         enable_pipeline: None,

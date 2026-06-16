@@ -340,6 +340,12 @@ export const zhCNPluginDefined = {
           description: "定义连接池连接上限，范围 1..4096。",
           placeholder: "256",
         },
+        "upstreams[].min_conns": {
+          label: "最小连接数",
+          description:
+            "定义连接池最小预热连接数，默认 0，范围 0..4096，且不能大于 max_conns。",
+          placeholder: "0",
+        },
         "upstreams[].insecure_skip_verify": {
           label: "跳过 TLS 校验",
           description: "控制是否跳过 TLS 证书校验。",

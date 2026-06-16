@@ -381,6 +381,12 @@ export const enUSPluginDefined = {
             "Define the upper limit of connection pool connections, in the range 1..4096.",
           placeholder: "256",
         },
+        "upstreams[].min_conns": {
+          label: "Minimum number of connections",
+          description:
+            "Define the minimum warmed connection count kept by the pool. Default is 0, range is 0..4096, and it must not exceed max_conns.",
+          placeholder: "0",
+        },
         "upstreams[].insecure_skip_verify": {
           label: "Skip TLS check",
           description:

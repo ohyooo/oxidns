@@ -168,6 +168,11 @@ impl<C: Connection> ConnectionPool<C> for ReusePool<C> {
             let _ = self.expand(QueryDeadline::new(self.connect_timeout)).await;
         }
     }
+
+    #[cfg(test)]
+    fn configured_min_size(&self) -> usize {
+        self.min_size
+    }
 }
 
 impl<C: Connection> ReusePool<C> {

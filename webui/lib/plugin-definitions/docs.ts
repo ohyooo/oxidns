@@ -71,6 +71,8 @@ export const pluginFieldDocs = {
       "- 类型：`integer`；必填：否；默认值：无\n- 单位：秒\n- 作用：定义连接池空闲连接保留时间。",
     "upstreams[].max_conns":
       "- 类型：`integer`；必填：否；默认值：自动\n- 作用：定义连接池连接上限。\n- 取值范围：`1..4096`。",
+    "upstreams[].min_conns":
+      "- 类型：`integer`；必填：否；默认值：`0`\n- 作用：定义连接池最小预热连接数。\n- 取值范围：`0..4096`，且不能大于当前上游的有效 `max_conns`。\n- 说明：未配置时保持懒加载，不会在 pool 创建时主动预建连接。",
     "upstreams[].insecure_skip_verify":
       "- 类型：`boolean`；必填：否；默认值：`false`\n- 作用：控制是否跳过 TLS 证书校验。\n- 注意事项：仅适用于自签证书或受控环境。",
     "upstreams[].timeout":

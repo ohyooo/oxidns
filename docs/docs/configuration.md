@@ -583,6 +583,8 @@ upstreams:
   - IPv6 需写成 `[addr]:port`。
 - `idle_timeout`
   - 空闲连接超时，单位秒。
+- `min_conns`
+  - 连接池最小预热连接数，默认 `0`，范围 `0..4096`，且不能大于 `max_conns`。
 - `max_conns`
   - 连接池最大连接数，范围 `1..4096`。
 - `insecure_skip_verify`

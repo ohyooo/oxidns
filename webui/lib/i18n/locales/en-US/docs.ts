@@ -74,6 +74,8 @@ export const enUSDocs = {
       "- Type: `integer`; required: no; default value: none\n- Unit: seconds\n- Function: Define the connection pool idle connection retention time.",
     "upstreams[].max_conns":
       "- Type: `integer`; Required: No; Default: Automatic\n- Function: Define the upper limit of connection pool connections.\n- Range: `1..4096`.",
+    "upstreams[].min_conns":
+      "- Type: `integer`; Required: No; Default: `0`\n- Function: Define the minimum warmed connection count kept by the pool.\n- Range: `0..4096`, and it must not exceed the upstream's effective `max_conns`.\n- Note: When omitted, connections remain lazy and are not pre-created when the pool is created.",
     "upstreams[].insecure_skip_verify":
       "- Type: `boolean`; required: no; default value: `false`\n- Function: Control whether to skip TLS certificate verification.\n- Note: Applies only to self-signed certificates or controlled environments.",
     "upstreams[].timeout":

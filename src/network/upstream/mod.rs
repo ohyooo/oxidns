@@ -222,6 +222,11 @@ pub struct UpstreamConfig {
     /// Used as the pool size upper bound to limit per-upstream resource usage.
     pub max_conns: Option<usize>,
 
+    /// Minimum number of connections to keep warm in the pool
+    ///
+    /// Defaults to 0, which preserves lazy connection creation.
+    pub min_conns: Option<usize>,
+
     /// Skip TLS certificate verification (**INSECURE**, testing only!)
     ///
     /// When `true`, disables certificate validation for TLS/QUIC/DoH
@@ -437,6 +442,9 @@ pub struct ConnectionInfo {
     /// Maximum number of connections in the pool
     pub max_conns: Option<usize>,
 
+    /// Minimum number of connections to keep warm in the pool
+    pub min_conns: Option<usize>,
+
     /// DNS query timeout (includes I/O, handshakes, and round-trip time)
     pub timeout: Duration,
 
@@ -457,6 +465,7 @@ impl ConnectionInfo {
     const DEFAULT_CONN_IDLE_TIME: Duration = Duration::from_secs(10);
     const DEFAULT_MAX_CONNS_LOAD: u16 = 64;
     const DEFAULT_MAX_CONNS_SIZE: usize = 64;
+    const DEFAULT_MIN_CONNS_SIZE: usize = 0;
     const DEFAULT_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
     const MAX_CONFIGURED_CONNS_SIZE: usize = 4096;
 
@@ -489,6 +498,7 @@ impl ConnectionInfo {
             so_mark: None,
             bind_to_device: None,
             max_conns: None,
+            min_conns: None,
         })
     }
 
@@ -498,6 +508,10 @@ impl ConnectionInfo {
 
     fn max_conns_or_default(&self) -> usize {
         self.max_conns.unwrap_or(Self::DEFAULT_MAX_CONNS_SIZE)
+    }
+
+    fn min_conns_or_default(&self) -> usize {
+        self.min_conns.unwrap_or(Self::DEFAULT_MIN_CONNS_SIZE)
     }
 }
 
@@ -515,6 +529,7 @@ impl TryFrom<UpstreamConfig> for ConnectionInfo {
             socks5,
             idle_timeout,
             max_conns,
+            min_conns,
             insecure_skip_verify,
             timeout,
             enable_pipeline,
@@ -547,6 +562,22 @@ impl TryFrom<UpstreamConfig> for ConnectionInfo {
                 return Err(DnsError::plugin(format!(
                     "upstream max_conns must be <= {}",
                     ConnectionInfo::MAX_CONFIGURED_CONNS_SIZE
+                )));
+            }
+        }
+        if let Some(min_conns) = min_conns {
+            if min_conns > ConnectionInfo::MAX_CONFIGURED_CONNS_SIZE {
+                return Err(DnsError::plugin(format!(
+                    "upstream min_conns must be <= {}",
+                    ConnectionInfo::MAX_CONFIGURED_CONNS_SIZE
+                )));
+            }
+
+            let effective_max_conns = max_conns.unwrap_or(ConnectionInfo::DEFAULT_MAX_CONNS_SIZE);
+            if min_conns > effective_max_conns {
+                return Err(DnsError::plugin(format!(
+                    "upstream min_conns must be <= max_conns (effective max_conns: {})",
+                    effective_max_conns
                 )));
             }
         }
@@ -621,6 +652,7 @@ impl TryFrom<UpstreamConfig> for ConnectionInfo {
             so_mark,
             bind_to_device,
             max_conns,
+            min_conns,
         })
     }
 }
@@ -747,7 +779,7 @@ impl UpstreamBuilder {
                         pipeline_request_map_capacity(),
                     );
                     let main_pool = PipelinePool::new(
-                        0,
+                        main_pool_min_conns(&connection_info),
                         connection_info.max_conns_or_default(),
                         ConnectionInfo::DEFAULT_MAX_CONNS_LOAD,
                         connection_info.idle_timeout,
@@ -759,7 +791,7 @@ impl UpstreamBuilder {
                     let tcp_builder =
                         TcpConnectionBuilder::new(&connection_info, reuse_request_map_capacity());
                     let fallback_pool = ReusePool::new(
-                        0,
+                        udp_truncated_fallback_min_conns(),
                         connection_info.max_conns_or_default(),
                         connection_info.idle_timeout,
                         Box::new(tcp_builder),
@@ -780,13 +812,13 @@ impl UpstreamBuilder {
                             &connection_info,
                             pipeline_request_map_capacity(),
                         );
-                        create_pipeline_pool(0, connection_info, Box::new(builder))
+                        Box::new(create_pipeline_pool(connection_info, Box::new(builder)))
                     } else {
                         let builder = TcpConnectionBuilder::new(
                             &connection_info,
                             reuse_request_map_capacity(),
                         );
-                        create_reuse_pool(0, connection_info, Box::new(builder))
+                        Box::new(create_reuse_pool(connection_info, Box::new(builder)))
                     }
                 }
                 #[cfg(feature = "upstream-dot")]
@@ -797,13 +829,13 @@ impl UpstreamBuilder {
                             &connection_info,
                             pipeline_request_map_capacity(),
                         );
-                        create_pipeline_pool(0, connection_info, Box::new(builder))
+                        Box::new(create_pipeline_pool(connection_info, Box::new(builder)))
                     } else {
                         let builder = TcpConnectionBuilder::new(
                             &connection_info,
                             reuse_request_map_capacity(),
                         );
-                        create_reuse_pool(0, connection_info, Box::new(builder))
+                        Box::new(create_reuse_pool(connection_info, Box::new(builder)))
                     }
                 }
                 #[cfg(not(feature = "upstream-dot"))]
@@ -817,7 +849,7 @@ impl UpstreamBuilder {
                 ConnectionType::DoQ => {
                     debug!("Creating QUIC upstream for {}", connection_info.raw_addr);
                     let builder = QuicConnectionBuilder::new(&connection_info);
-                    create_pipeline_pool(0, connection_info, Box::new(builder))
+                    Box::new(create_pipeline_pool(connection_info, Box::new(builder)))
                 }
                 #[cfg(not(feature = "upstream-doq"))]
                 ConnectionType::DoQ => {
@@ -841,7 +873,7 @@ impl UpstreamBuilder {
                         #[cfg(feature = "upstream-doh3")]
                         {
                             let builder = H3ConnectionBuilder::new(&connection_info);
-                            create_pipeline_pool(0, connection_info, Box::new(builder))
+                            Box::new(create_pipeline_pool(connection_info, Box::new(builder)))
                         }
                         #[cfg(not(feature = "upstream-doh3"))]
                         {
@@ -852,7 +884,7 @@ impl UpstreamBuilder {
                         }
                     } else {
                         let builder = H2ConnectionBuilder::new(&connection_info);
-                        create_pipeline_pool(0, connection_info, Box::new(builder))
+                        Box::new(create_pipeline_pool(connection_info, Box::new(builder)))
                     }
                 }
                 #[cfg(not(feature = "upstream-doh"))]
@@ -955,13 +987,23 @@ const fn reuse_request_map_capacity() -> u16 {
     1
 }
 
+#[inline]
+fn main_pool_min_conns(connection_info: &ConnectionInfo) -> usize {
+    connection_info.min_conns_or_default()
+}
+
+#[inline]
+const fn udp_truncated_fallback_min_conns() -> usize {
+    0
+}
+
 fn create_pipeline_pool<C: Connection>(
-    min_size: usize,
     connection_info: ConnectionInfo,
     builder: Box<dyn ConnectionBuilder<C>>,
-) -> Box<dyn Upstream> {
+) -> PooledUpstream<C> {
     let timeout = connection_info.timeout;
-    Box::new(PooledUpstream::<C> {
+    let min_size = main_pool_min_conns(&connection_info);
+    PooledUpstream::<C> {
         pool: PipelinePool::new(
             min_size,
             connection_info.max_conns_or_default(),
@@ -972,16 +1014,16 @@ fn create_pipeline_pool<C: Connection>(
             timeout,
         ),
         connection_info,
-    })
+    }
 }
 
 fn create_reuse_pool<C: Connection>(
-    min_size: usize,
     connection_info: ConnectionInfo,
     builder: Box<dyn ConnectionBuilder<C>>,
-) -> Box<dyn Upstream> {
+) -> PooledUpstream<C> {
     let timeout = connection_info.timeout;
-    Box::new(PooledUpstream::<C> {
+    let min_size = main_pool_min_conns(&connection_info);
+    PooledUpstream::<C> {
         pool: ReusePool::new(
             min_size,
             connection_info.max_conns_or_default(),
@@ -991,7 +1033,7 @@ fn create_reuse_pool<C: Connection>(
             timeout,
         ),
         connection_info,
-    })
+    }
 }
 
 /// Pooled upstream resolver implementation
@@ -1347,7 +1389,7 @@ impl<C: Connection> BootstrapUpstream<C> {
         // Create appropriate pool type based on protocol
         let new_pool: Arc<dyn ConnectionPool<C>> = match self.connection_info.connection_type {
             ConnectionType::UDP => PipelinePool::new(
-                0,
+                main_pool_min_conns(&self.connection_info),
                 self.connection_info.max_conns_or_default(),
                 ConnectionInfo::DEFAULT_MAX_CONNS_LOAD,
                 self.connection_info.idle_timeout,
@@ -1358,7 +1400,7 @@ impl<C: Connection> BootstrapUpstream<C> {
             ConnectionType::TCP | ConnectionType::DoT => {
                 if self.connection_info.enable_pipeline.unwrap_or(false) {
                     PipelinePool::new(
-                        0,
+                        main_pool_min_conns(&self.connection_info),
                         self.connection_info.max_conns_or_default(),
                         ConnectionInfo::DEFAULT_MAX_CONNS_LOAD,
                         self.connection_info.idle_timeout,
@@ -1368,7 +1410,7 @@ impl<C: Connection> BootstrapUpstream<C> {
                     )
                 } else {
                     ReusePool::new(
-                        0,
+                        main_pool_min_conns(&self.connection_info),
                         self.connection_info.max_conns_or_default(),
                         self.connection_info.idle_timeout,
                         builder,
@@ -1378,7 +1420,7 @@ impl<C: Connection> BootstrapUpstream<C> {
                 }
             }
             ConnectionType::DoQ | ConnectionType::DoH => PipelinePool::new(
-                0,
+                main_pool_min_conns(&self.connection_info),
                 self.connection_info.max_conns_or_default(),
                 ConnectionInfo::DEFAULT_MAX_CONNS_LOAD,
                 self.connection_info.idle_timeout,
@@ -1614,6 +1656,24 @@ mod tests {
     }
 
     #[derive(Debug)]
+    struct NoopConnectionBuilder;
+
+    #[async_trait]
+    impl ConnectionBuilder<NoopConnection> for NoopConnectionBuilder {
+        async fn create_connection(
+            &self,
+            _conn_id: u16,
+            _deadline: QueryDeadline,
+        ) -> Result<Arc<NoopConnection>> {
+            Ok(Arc::new(NoopConnection {
+                available: AtomicBool::new(true),
+                using_count: AtomicU16::new(0),
+                last_used: AtomicU64::new(crate::core::app_clock::AppClock::elapsed_millis()),
+            }))
+        }
+    }
+
+    #[derive(Debug)]
     struct DeadlineHandlingPool {
         handled_timeout: Arc<AtomicBool>,
     }
@@ -1631,6 +1691,10 @@ mod tests {
         }
 
         async fn maintain(&self) {}
+
+        fn configured_min_size(&self) -> usize {
+            0
+        }
     }
 
     fn make_upstream_config(addr: &str) -> UpstreamConfig {
@@ -1644,6 +1708,7 @@ mod tests {
             socks5: None,
             idle_timeout: None,
             max_conns: None,
+            min_conns: None,
             insecure_skip_verify: None,
             timeout: None,
             enable_pipeline: None,
@@ -1760,6 +1825,100 @@ mod tests {
             err.to_string().contains("max_conns must be <= 4096"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn test_min_conns_is_preserved() {
+        let mut cfg = make_upstream_config("8.8.8.8");
+        cfg.min_conns = Some(3);
+
+        let info = ConnectionInfo::try_from(cfg).expect("upstream config should parse");
+
+        assert_eq!(info.min_conns, Some(3));
+    }
+
+    #[test]
+    fn test_min_conns_allows_zero() {
+        let mut cfg = make_upstream_config("8.8.8.8");
+        cfg.min_conns = Some(0);
+
+        let info = ConnectionInfo::try_from(cfg).expect("zero min_conns should be accepted");
+
+        assert_eq!(info.min_conns, Some(0));
+        assert_eq!(info.min_conns_or_default(), 0);
+    }
+
+    #[test]
+    fn test_min_conns_rejects_excessive_value() {
+        let mut cfg = make_upstream_config("8.8.8.8");
+        cfg.max_conns = Some(ConnectionInfo::MAX_CONFIGURED_CONNS_SIZE);
+        cfg.min_conns = Some(ConnectionInfo::MAX_CONFIGURED_CONNS_SIZE + 1);
+
+        let err =
+            ConnectionInfo::try_from(cfg).expect_err("excessive min_conns should be rejected");
+
+        assert!(
+            err.to_string().contains("min_conns must be <= 4096"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn test_min_conns_rejects_value_above_configured_max_conns() {
+        let mut cfg = make_upstream_config("8.8.8.8");
+        cfg.max_conns = Some(2);
+        cfg.min_conns = Some(3);
+
+        let err = ConnectionInfo::try_from(cfg)
+            .expect_err("min_conns above configured max_conns should be rejected");
+
+        assert!(
+            err.to_string().contains("min_conns must be <= max_conns"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn test_min_conns_rejects_value_above_default_max_conns() {
+        let mut cfg = make_upstream_config("8.8.8.8");
+        cfg.min_conns = Some(ConnectionInfo::DEFAULT_MAX_CONNS_SIZE + 1);
+
+        let err = ConnectionInfo::try_from(cfg)
+            .expect_err("min_conns above default max_conns should be rejected");
+
+        assert!(err.to_string().contains("effective max_conns: 64"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_pool_uses_configured_min_conns() {
+        let mut info = ConnectionInfo::with_addr("tcp://127.0.0.1").expect("upstream should parse");
+        info.max_conns = Some(4);
+        info.min_conns = Some(2);
+
+        let upstream =
+            create_pipeline_pool::<NoopConnection>(info, Box::new(NoopConnectionBuilder));
+
+        assert_eq!(upstream.pool.configured_min_size(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_reuse_pool_uses_configured_min_conns() {
+        let mut info = ConnectionInfo::with_addr("tcp://127.0.0.1").expect("upstream should parse");
+        info.max_conns = Some(4);
+        info.min_conns = Some(2);
+
+        let upstream = create_reuse_pool::<NoopConnection>(info, Box::new(NoopConnectionBuilder));
+
+        assert_eq!(upstream.pool.configured_min_size(), 2);
+    }
+
+    #[test]
+    fn test_udp_truncated_fallback_keeps_zero_min_conns() {
+        let mut info = ConnectionInfo::with_addr("udp://127.0.0.1").expect("upstream should parse");
+        info.min_conns = Some(2);
+
+        assert_eq!(main_pool_min_conns(&info), 2);
+        assert_eq!(udp_truncated_fallback_min_conns(), 0);
     }
 
     #[tokio::test]

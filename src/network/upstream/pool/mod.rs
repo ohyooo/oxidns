@@ -209,6 +209,9 @@ pub trait ConnectionPool<C: Connection>: Send + Sync + Debug + 'static {
     /// - Drop failed connections
     /// - Ensure minimum pool size
     async fn maintain(&self);
+
+    #[cfg(test)]
+    fn configured_min_size(&self) -> usize;
 }
 
 /// Pools that own a periodic maintenance task managed by the global task

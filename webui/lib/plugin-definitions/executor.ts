@@ -202,6 +202,14 @@ export const executorPluginDefinitions: PluginKindDefinition[] = [
               placeholder: "256",
             },
             {
+              key: "min_conns",
+              description:
+                "定义连接池最小预热连接数，默认 0，范围 0..4096，且不能大于 max_conns。",
+              label: "最小连接数",
+              type: "number",
+              placeholder: "0",
+            },
+            {
               key: "insecure_skip_verify",
               description: "控制是否跳过 TLS 证书校验。",
               label: "跳过 TLS 校验",
