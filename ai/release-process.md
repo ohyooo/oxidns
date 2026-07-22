@@ -117,10 +117,11 @@ uses it in two places:
 - `softprops/action-gh-release` prepends it to GitHub's generated release notes,
   which remain at the end for merged pull requests, contributors, and the full
   changelog link.
-- The Telegram notification uses the same file verbatim, followed by the
-  GitHub Release URL. If the resulting message exceeds Telegram's 4096
-  character limit, the workflow truncates the curated text while preserving a
-  truncation notice and the full Release link.
+- The Telegram notification renders the same file as Telegram-compatible HTML,
+  followed by the GitHub Release URL. Headings, lists, bold text, inline code,
+  and Markdown links are preserved. If the resulting message exceeds
+  Telegram's 4096-character limit, the workflow truncates the curated text
+  while preserving a truncation notice and the full Release link.
 
 Use this standard Chinese template. A small number of emoji is allowed when it
 improves scanability:
