@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use crate::infra::error::{DnsError, Result};
 
 #[cfg(windows)]
-pub(super) fn unpack_zip(archive: &std::path::Path, out_dir: &std::path::Path) -> Result<()> {
+pub(super) fn unpack_zip(archive: &Path, out_dir: &Path) -> Result<()> {
     let file = File::open(archive).map_err(|e| {
         DnsError::runtime(format!("failed to open zip '{}': {e}", archive.display()))
     })?;
@@ -68,7 +68,7 @@ pub(super) fn unpack_zip(archive: &std::path::Path, out_dir: &std::path::Path) -
 }
 
 #[cfg(windows)]
-pub(super) fn find_extracted_binary_windows(unpack_dir: &std::path::Path) -> Result<PathBuf> {
+pub(super) fn find_extracted_binary_windows(unpack_dir: &Path) -> Result<PathBuf> {
     let candidate = unpack_dir.join("oxidns.exe");
     if candidate.is_file() {
         return Ok(candidate);
