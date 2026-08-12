@@ -1607,33 +1607,12 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 [[package]]
 name = "mikrotik-proto"
 version = "0.2.0"
-source = "git+https://github.com/svenshi/mikrotik-rs.git?branch=fix%2Ftokio-unbounded-response-channel#4b525bba941d136d80804d300159978f4434496d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4bfa65d096fee86dd1f27c579bc729d4fdb0b1bfee24e2fc71acd0a8349e836"
 dependencies = [
  "hashbrown 0.17.1",
  "thiserror 2.0.19",
  "uuid",
-]
-
-[[package]]
-name = "mikrotik-rs"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eee69e2a6bd3a789d1bf798286c6448c1cd689b66a28db565f86c3f193a0e6fe"
-dependencies = [
- "mikrotik-proto",
- "mikrotik-tokio",
-]
-
-[[package]]
-name = "mikrotik-tokio"
-version = "0.2.0"
-source = "git+https://github.com/svenshi/mikrotik-rs.git?branch=fix%2Ftokio-unbounded-response-channel#4b525bba941d136d80804d300159978f4434496d"
-dependencies = [
- "mikrotik-proto",
- "rustls",
- "thiserror 2.0.19",
- "tokio",
- "tokio-rustls",
 ]
 
 [[package]]
@@ -1760,8 +1739,8 @@ dependencies = [
  "jiff",
  "lazy_static",
  "libc",
- "mikrotik-rs",
  "oxidns-macros",
+ "oxidns-mikrotik-rs",
  "oxidns-proto",
  "oxidns-ripset",
  "oxidns-zoneparser",
@@ -1804,6 +1783,29 @@ version = "0.1.0"
 dependencies = [
  "quote",
  "syn 3.0.3",
+]
+
+[[package]]
+name = "oxidns-mikrotik-rs"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52f73213169f6b107890d2c603c3249ff0863be1ce33c2d3ac0e81722db349b1"
+dependencies = [
+ "mikrotik-proto",
+ "oxidns-mikrotik-tokio",
+]
+
+[[package]]
+name = "oxidns-mikrotik-tokio"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "367b0fae846fe8ee2a92f8f7f96cd0bf3159cea58e464b5aeb2f381b3c274663"
+dependencies = [
+ "mikrotik-proto",
+ "rustls",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]
