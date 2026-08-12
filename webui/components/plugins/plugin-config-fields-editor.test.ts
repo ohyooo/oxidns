@@ -64,9 +64,17 @@ const forwardDefinition = executorPluginDefinitions.find(
 const fallbackDefinition = executorPluginDefinitions.find(
   (definition) => definition.kind === "fallback",
 );
+const preferDefinitions = executorPluginDefinitions.filter(
+  (definition) =>
+    definition.kind === "prefer_ipv4" || definition.kind === "prefer_ipv6",
+);
 
 if (!forwardDefinition || !fallbackDefinition) {
   throw new Error("forward and fallback executor definitions must exist");
+}
+
+if (preferDefinitions.length !== 2) {
+  throw new Error("both dual selector executor definitions must exist");
 }
 
 describe("time matcher config form", () => {
@@ -221,6 +229,21 @@ describe("optional object config fields", () => {
       expect(
         serializePluginConfigValues(definition.configSchema, values),
       ).toHaveProperty("tls", {});
+    }
+  });
+});
+
+describe("optional reference config fields", () => {
+  it("omits a cleared dual selector probe executor", () => {
+    for (const definition of preferDefinitions) {
+      const values = createPluginConfigFormValues(definition.configSchema, {
+        probe_executor: "probe_forward",
+      });
+      values.probe_executor = "";
+
+      expect(
+        serializePluginConfigValues(definition.configSchema, values),
+      ).not.toHaveProperty("probe_executor");
     }
   });
 });

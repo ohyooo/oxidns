@@ -32,7 +32,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_yaml_ng::Value;
-use tokio::task::{JoinError, JoinHandle};
+use tokio::task::JoinError;
+use tokio_util::task::AbortOnDropHandle;
 
 use crate::config::types::PluginConfig;
 use crate::core::context::DnsContext;
@@ -83,6 +84,7 @@ enum ExecPlan {
 }
 
 type SubqueryOutcome = (DnsContext, Result<ExecStep>);
+type SubqueryHandle = AbortOnDropHandle<SubqueryOutcome>;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum PreferredProbeOutcome {
@@ -279,7 +281,7 @@ impl DualSelector {
         context: &mut DnsContext,
         domain: &str,
         original_join: std::result::Result<SubqueryOutcome, JoinError>,
-        mut preferred_handle: JoinHandle<SubqueryOutcome>,
+        mut preferred_handle: SubqueryHandle,
     ) -> Result<ExecStep> {
         match tokio::time::timeout(PROBE_WAIT_TIMEOUT, &mut preferred_handle).await {
             Ok(preferred_join) => {
@@ -363,26 +365,23 @@ impl DualSelector {
     }
 }
 
-fn spawn_subquery(next: ExecutorNext, mut context: DnsContext) -> JoinHandle<SubqueryOutcome> {
-    tokio::spawn(async move {
+fn spawn_subquery(next: ExecutorNext, mut context: DnsContext) -> SubqueryHandle {
+    AbortOnDropHandle::new(tokio::spawn(async move {
         let step = next.next(&mut context).await;
         (context, step)
-    })
+    }))
 }
 
-fn spawn_executor(
-    executor: Arc<dyn Executor>,
-    mut context: DnsContext,
-) -> JoinHandle<SubqueryOutcome> {
-    tokio::spawn(async move {
+fn spawn_executor(executor: Arc<dyn Executor>, mut context: DnsContext) -> SubqueryHandle {
+    AbortOnDropHandle::new(tokio::spawn(async move {
         let step = executor.execute_with_next(&mut context, None).await;
         (context, step)
-    })
+    }))
 }
 
-async fn abort_and_reap(handle: JoinHandle<SubqueryOutcome>) {
+async fn abort_and_reap(mut handle: SubqueryHandle) {
     handle.abort();
-    let _ = handle.await;
+    let _ = (&mut handle).await;
 }
 
 fn join_error(err: JoinError) -> DnsError {
@@ -813,8 +812,8 @@ mod tests {
     #[async_trait]
     impl Executor for HangingProbeExecutor {
         async fn execute(&self, _context: &mut DnsContext) -> Result<ExecStep> {
-            self.started.store(true, Ordering::SeqCst);
             let mut guard = CancellationGuard::new(self.cancelled.clone());
+            self.started.store(true, Ordering::SeqCst);
             tokio::time::sleep(Duration::from_secs(60)).await;
             guard.complete();
             Ok(ExecStep::Next)
@@ -1070,6 +1069,52 @@ mod tests {
         assert_eq!(step, ExecStep::Next);
         assert!(has_answer_of_type(&context, RecordType::AAAA));
         assert!(probe_cancelled.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn parent_cancellation_aborts_original_and_probe_tasks() {
+        AppClock::start();
+        let original_started = Arc::new(AtomicBool::new(false));
+        let original_cancelled = Arc::new(AtomicBool::new(false));
+        let original = HangingProbeExecutor {
+            started: original_started.clone(),
+            cancelled: original_cancelled.clone(),
+        };
+        let probe_started = Arc::new(AtomicBool::new(false));
+        let probe_cancelled = Arc::new(AtomicBool::new(false));
+        let probe = HangingProbeExecutor {
+            started: probe_started.clone(),
+            cancelled: probe_cancelled.clone(),
+        };
+        let selector = make_selector_with_probe(RecordType::A, Arc::new(probe));
+
+        let parent = tokio::spawn(async move {
+            let mut context = make_context(RecordType::AAAA);
+            run_selector(&selector, &mut context, Some(make_next(Arc::new(original)))).await
+        });
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !original_started.load(Ordering::SeqCst) || !probe_started.load(Ordering::SeqCst)
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both subqueries should start");
+
+        parent.abort();
+        let parent_result = parent.await;
+        assert!(parent_result.is_err_and(|err| err.is_cancelled()));
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !original_cancelled.load(Ordering::SeqCst)
+                || !probe_cancelled.load(Ordering::SeqCst)
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both subqueries should be cancelled with their parent");
     }
 
     #[tokio::test]
