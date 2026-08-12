@@ -215,12 +215,16 @@ export const zhCNDocs = {
       "- 类型：`integer`；必填：否；默认值：`60`\n- 单位：秒\n- 作用：定义失败探测评分的保留时间。\n- 配置要求：启用缓存时必须大于 0。\n- 运行影响：失败缓存可避免不可达地址在短时间内被反复探测，同时允许较快恢复。",
   },
   prefer_ipv4: {
+    probe_executor:
+      "- 类型：`string`；必填：否；默认值：未配置（兼容 continuation 探针模式）\n- 作用：引用一个仅用于 preferred QTYPE 内部探针的 executor；填写不带 `$` 的普通 executor tag。\n- 运行影响：可引用 `forward`、`sequence` 或其他能够独立生成 DNS response 的 executor。探针上下文与外层隔离，探针路径的 marks、extensions 和执行路径不会提交外层。\n- 缓存限制：若探针结果依赖客户端、marks、随机、限流或其他请求级状态，应关闭 `cache`。",
     cache:
       "- 类型：`boolean`；必填：否；默认值：`true`\n- 作用：控制是否缓存 preferred 类型存在状态。",
     cache_ttl:
       "- 类型：`integer`；必填：否；默认值：`3600`\n- 单位：秒\n- 作用：定义 preferred 状态缓存时长。",
   },
   prefer_ipv6: {
+    probe_executor:
+      "- 类型：`string`；必填：否；默认值：未配置（兼容 continuation 探针模式）\n- 作用：引用一个仅用于 preferred QTYPE 内部探针的 executor；填写不带 `$` 的普通 executor tag。\n- 运行影响：可引用 `forward`、`sequence` 或其他能够独立生成 DNS response 的 executor。探针上下文与外层隔离，探针路径的 marks、extensions 和执行路径不会提交外层。\n- 缓存限制：若探针结果依赖客户端、marks、随机、限流或其他请求级状态，应关闭 `cache`。",
     cache:
       "- 类型：`boolean`；必填：否；默认值：`true`\n- 作用：控制是否缓存 preferred 类型存在状态。",
     cache_ttl:
