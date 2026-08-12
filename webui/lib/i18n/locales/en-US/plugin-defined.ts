@@ -1772,8 +1772,22 @@ export const enUSPluginDefined = {
             "The current number of coalesced observations waiting for the manager.",
           ros_route_managed_entries:
             "The number of route entries currently retained by the manager.",
+          ros_route_coalesced_total:
+            "The total number of route observations merged into an existing mailbox route key.",
+          ros_route_reconnect_total:
+            "The total number of successful RouterOS transport reconnections.",
+          ros_route_connect_attempt_total:
+            "The total number of RouterOS transport connection attempts.",
+          ros_route_backoff_total:
+            "The total number of RouterOS transport backoff schedules.",
+          ros_route_reconcile_error_total:
+            "The total number of failed persistent-route reconciliation attempts.",
+          ros_route_last_reconcile_success_timestamp_seconds:
+            "The Unix timestamp of the most recent successful persistent-route reconciliation.",
           ros_route_degraded:
             "Whether the RouterOS transport is currently degraded.",
+          ros_route_cleanup_error_total:
+            "The total number of route entries that failed shutdown cleanup.",
         },
       },
     },

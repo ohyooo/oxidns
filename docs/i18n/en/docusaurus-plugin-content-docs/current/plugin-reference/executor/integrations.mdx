@@ -676,30 +676,58 @@ args:
 
 ## `ros_route`
 
-Writes A/AAAA addresses from successful DNS answers as per-IP static routes in a RouterOS policy-routing table, applying the configured gateway and distance to each address. It is a continuation executor and should appear before the executor that produces the final answer.
+### Purpose
+
+Synchronizes A/AAAA addresses from successful DNS answers as static host routes in a selected RouterOS routing table. IPv4 addresses become `/32` routes and IPv6 addresses become `/128` routes, using the configured gateway for each family and one route distance.
+
+This plugin is a side-effect-only continuation executor: it does not modify DNS requests, responses, or control flow. Place it before the executor that produces the final answer so it can observe the completed response on the return path.
+
+### Example Configuration
 
 ```yaml
 - tag: ros_route_policy
   type: ros_route
   args:
+    # RouterOS API endpoint
     address: "192.168.88.1:8728"
+    # API credentials
     username: "api-user"
     password: "secret"
-    # Plaintext API is the default; configure tls to enable API-SSL
+    # API connect, command-send, and response-receive timeouts in seconds
+    connect_timeout: 5
+    send_timeout: 5
+    receive_timeout: 5
+    # Queue observations without blocking the DNS hot path
+    async: true
+    # Maximum wait for one manager attempt when async=false
+    wait_timeout: 8s
+    # Distinct-route limit applied independently to ingress and retry queues
+    queue_capacity: 16384
+    # The RouterOS table and matching routing rule must already exist
     routing_table: "via_proxy"
+    # Configure at least one family gateway
     gateway4: "192.168.88.2@main"
     gateway6: "fe80::2%ether1"
-    async: true
-    wait_timeout: 8s
-    queue_capacity: 16384
-    fixed_ttl: 0
-    conntrack_guard: true
+    # Managed route attributes
+    distance: 100
+    comment_prefix: "oxi"
+    # Dynamic-route TTL clamp
+    min_ttl: 60
+    max_ttl: 3600
+    # Check RouterOS connection tracking before deleting expired host routes
+    conntrack_guard: false
+    # Remove routes owned by this instance during shutdown or application reload
     cleanup_on_shutdown: true
+    # DNS-independent routes that should remain present
     persistent:
-      ips: ["198.51.100.0/24"]
+      ips:
+        - "198.51.100.0/24"
+        - "2001:db8:100::/64"
+      files:
+        - "/etc/oxidns/persistent_routes.txt"
 ```
 
-To enable API-SSL, use the complete nested TLS configuration:
+To enable API-SSL, change the endpoint to the configured TLS port (usually `8729`) and add `tls` explicitly:
 
 ```yaml
 args:
@@ -713,23 +741,163 @@ args:
     insecure: false
 ```
 
-- `routing_table` and `gateway4`/`gateway6` select the target. The RouterOS table, routing rule, and default route must already exist.
-- `min_ttl`/`max_ttl` default to `60`/`3600` seconds. `fixed_ttl` overrides DNS TTL; `fixed_ttl: 0` disables time-based expiry, so the route remains until operator deletion, shutdown cleanup, or a later configuration action.
-- `ros_route` and `ros_address_list` process successful A/AAAA queries only and collect every enabled-family A/AAAA record from the Answer section. They do not rebuild CNAME chains or cap address TTLs by CNAME TTLs. Every IP forms an independent lease; a later answer missing an old IP, NODATA, or NXDOMAIN does not immediately withdraw an existing item.
-- `persistent` is a DNS-independent IP/CIDR set. Files are read only during plugin initialization; reload the plugin or application to apply file changes.
-- RouterOS failures do not block DNS startup. `async` defaults to `true`; `async: false` waits up to `wait_timeout` (default `8s`), after which work continues in the background and the DNS response remains unchanged. `queue_capacity` defaults to `16384` for each of the ingress and retry stages.
-- `conntrack_guard` defaults to disabled and only protects expired dynamic `/32` and `/128` host routes. A tracked connection to the exact target IP defers deletion for 30 seconds; query failures fail closed. Persistent configuration removal, shutdown cleanup, and internal maintenance bypass the guard. CIDR connection protection is not supported.
-- Dynamic leases have no record-count limit. In particular, `fixed_ttl: 0` routes do not expire naturally; operators must plan RouterOS route-table and OxiDNS memory capacity and reclaim them through operator deletion, configuration changes, or shutdown cleanup.
-- Startup performs one full recovery: persistent routes converge to configuration, unexpired dynamic leases are recovered from comments, and expired routes flow through sweep and conntrack guard. Failed startup scans retry with backoff until successful.
-- The 180-second periodic reconcile handles `persistent` routes only and performs no RouterOS query when the persistent set is empty. Dynamic routes are DNS observations rather than desired state, so operator edits are not periodically corrected.
-- `persistent.files` is read only during initialization or reload; periodic reconcile always uses the in-memory set.
-- `comment_prefix` defaults to `oxi` and combines with the plugin `tag` to form the RouterOS ownership namespace; neither value may contain `;` or `=`.
-- RouterOS comments store only item kind, expiry, and last-observed time, not domain references. Restart recovery restores unexpired leases; the current TTL policy may shorten an old deadline but never extends it without a new DNS observation.
-- `tls` enables API-SSL (usually port `8729`): `tls.server_name` overrides the certificate server name, `tls.ca` selects a self-signed/private CA file, and `tls.insecure` defaults to `false`; setting it to `true` disables certificate verification and cannot be combined with `tls.ca`. Omitting `tls` uses plaintext API (usually `8728`).
-- With `cleanup_on_shutdown: true`, dynamic and persistent routes owned by this plugin tag are removed within one 30-second total budget; `false` leaves them for recovery on the next start. Set it to `false` when production restarts or rolling deployments require policy continuity.
-- An application-level reload gives this plugin direct shutdown/restart semantics: the old instance fully shuts down before the new instance is initialized and started, and pending observations from the old instance are not transferred. With `cleanup_on_shutdown: true`, owned routes are removed and a policy gap may exist while they are rebuilt; set it to `false` to retain RouterOS routes across reload. Different processes must not write the same plugin tag, comment prefix, and routing table concurrently; rolling deployments need distinct ownership namespaces or an old writer that has already stopped.
-- Before deletion, only the internal ID, route key, and plugin ownership namespace are rechecked; gateway, distance, disabled state, and lease-comment payload are not compared as a full mutable snapshot. RouterOS still exposes final removal by internal ID and has no atomic compare-and-delete primitive.
-- The plugin no longer creates temporary validation routes. Invalid gateway or routing-table settings surface on the first real write and enter background retry.
-- When a later DNS response observes the same IP, its dynamic lease comment is rewritten only after 75% of the TTL has elapsed or five minutes have passed since the previous successful write, whichever comes first. The plugin does not run a separate dynamic-lease refresh timer.
+### Configuration Details
+
+#### `address`
+
+- Type: `string`; Required: yes; Default: none
+- Purpose: RouterOS API endpoint in `host:port` form. Plaintext API commonly uses `8728`, while API-SSL commonly uses `8729`; use the port configured on the device.
+
+#### `username`
+
+- Type: `string`; Required: yes; Default: none
+- Purpose: RouterOS API username. The account needs permission to inspect and manage the target routing table and, when `conntrack_guard` is enabled, read connection tracking.
+
+#### `password`
+
+- Type: `string`; Required: yes; Default: none
+- Purpose: RouterOS API password. Do not expose real credentials in public repositories or shared examples.
+
+#### `tls`
+
+- Type: `object`; Required: no; Default: none (plaintext API)
+- Purpose: Enables RouterOS API-SSL.
+- `tls.server_name`: optional string overriding the certificate server name inferred from `address`.
+- `tls.ca`: optional path to a PEM file containing a self-signed certificate or private CA.
+- `tls.insecure`: optional boolean, default `false`; disables certificate verification and cannot be combined with `tls.ca`.
+
+#### `connect_timeout`
+
+- Type: `u64`; Required: no; Default: `5`
+- Unit: seconds
+- Purpose: Maximum time allowed to establish a RouterOS API connection. Must be greater than `0`.
+
+#### `send_timeout`
+
+- Type: `u64`; Required: no; Default: `5`
+- Unit: seconds
+- Purpose: Maximum time allowed to send one RouterOS API command. Must be greater than `0`.
+
+#### `receive_timeout`
+
+- Type: `u64`; Required: no; Default: `5`
+- Unit: seconds
+- Purpose: Maximum time allowed to receive the next part of a RouterOS API response. Must be greater than `0`; increase it only when the management plane is known to respond slowly.
+
+#### `async`
+
+- Type: `bool`; Required: no; Default: `true`
+- Purpose: When enabled, the DNS return path only submits observations to the background manager. When disabled, it waits for one manager result, but RouterOS failures never modify the DNS response.
+
+#### `wait_timeout`
+
+- Type: `duration`; Required: no; Default: `8s`
+- Purpose: With `async: false`, limits how long a DNS request waits for the manager. On timeout, the DNS response returns normally and queued work and retries continue in the background. Must be greater than `0`.
+
+#### `queue_capacity`
+
+- Type: `usize`; Required: no; Default: `16384`
+- Purpose: Distinct route-key limit applied independently to the deduplicating ingress queue and retry backlog. Repeated observations for the same key coalesce; a new key is dropped with a metric when full, without changing the DNS response. Must be greater than `0`.
+
+#### `routing_table`
+
+- Type: `string`; Required: yes; Default: none
+- Purpose: RouterOS routing table that receives managed routes. The plugin does not create the table, routing rules, or default routes; provision them on RouterOS first.
+
+#### `gateway4`
+
+- Type: `string`; Conditionally required; Default: none
+- Purpose: RouterOS gateway expression used by IPv4 dynamic host routes and persistent IPv4 routes. Without it, IPv4 DNS addresses and IPv4 `persistent` entries are ignored.
+
+#### `gateway6`
+
+- Type: `string`; Conditionally required; Default: none
+- Purpose: RouterOS gateway expression used by IPv6 dynamic host routes and persistent IPv6 routes. Without it, IPv6 DNS addresses and IPv6 `persistent` entries are ignored.
+- Constraint: Configure at least one of `gateway4` or `gateway6`.
+
+#### `distance`
+
+- Type: `u8`; Required: no; Default: `100`
+- Purpose: RouterOS route distance applied to all managed routes.
+
+#### `comment_prefix`
+
+- Type: `string`; Required: no; Default: `oxi`
+- Purpose: Combines with the plugin `tag` to form the ownership namespace stored in RouterOS comments for startup recovery, reconciliation, and safe cleanup.
+- Constraint: Neither `comment_prefix` nor the plugin `tag` may contain `;` or `=`. Do not manually alter ownership comments on managed routes.
+
+#### `persistent`
+
+- Type: `object`; Required: no; Default: none
+- Purpose: DNS-independent IP/CIDR routes that should remain present. They are synchronized at startup and reconciled every 180 seconds when the configured set is non-empty.
+
+#### `persistent.ips`
+
+- Type: `array<string>`; Required: no; Default: empty
+- Purpose: Inline persistent IPv4/IPv6 addresses or CIDRs. Plain addresses normalize to `/32` or `/128`, and CIDRs normalize to their network address.
+- Ignore rules: Entries whose family has no configured gateway and `/0` default routes are ignored with a warning.
+
+#### `persistent.files`
+
+- Type: `array<string>`; Required: no; Default: empty
+- Purpose: Loads persistent routes from text files, one IP/CIDR per line, with `#` comments supported.
+- Load timing: Files are read only during initialization or reload. Periodic reconciliation uses the in-memory set, so file changes require a reload.
+
+#### `min_ttl`
+
+- Type: `u32`; Required: no; Default: `60`
+- Unit: seconds
+- Purpose: Lower bound for dynamic host-route leases. Smaller DNS TTLs are raised to this value.
+
+#### `max_ttl`
+
+- Type: `u32`; Required: no; Default: `3600`
+- Unit: seconds
+- Purpose: Upper bound for dynamic host-route leases. Larger DNS TTLs are capped at this value.
+- Constraint: `min_ttl` must not exceed `max_ttl`.
+
+#### `fixed_ttl`
+
+- Type: `u32`; Required: no; Default: none
+- Unit: seconds
+- Purpose: Overrides the DNS TTL for every dynamic host route, bypassing the `min_ttl`/`max_ttl` result. Set it to `0` for routes that do not expire by time.
+
+#### `cleanup_on_shutdown`
+
+- Type: `bool`; Required: no; Default: `true`
+- Purpose: Removes dynamic and persistent routes in the current ownership namespace during normal shutdown and application reload. Shutdown and cleanup share one 30-second budget.
+- Recommendation: Set it to `false` when a restart or reload must not create a policy gap, allowing the next instance to recover route state from RouterOS comments.
+
+#### `conntrack_guard`
+
+- Type: `bool`; Required: no; Default: `false`
+- Purpose: Queries RouterOS connection tracking before deleting an expired dynamic `/32` or `/128` host route. A connection to the destination defers deletion for 30 seconds.
+- Boundary: Query failures keep the route. Persistent configuration removal, shutdown cleanup, and CIDR routes bypass this guard.
+
+### Behavior
+
+- The forward stage only passes through. The return stage observes contexts whose first question is A/AAAA and whose RCODE is `NOERROR`. When the response has a question section, its first question must also match the request.
+- It extracts all enabled-family A/AAAA records from the Answer section without reconstructing CNAME chains. Duplicate IPs retain the largest TTL, and every address forms an independent dynamic host-route lease.
+- A later response that omits an old IP, or returns NODATA/NXDOMAIN, does not immediately withdraw an existing route; finite leases are removed by the expiry sweep.
+- RouterOS unavailability does not prevent DNS startup. The manager reconnects and retries in the background, and the DNS response remains unchanged.
+- Startup recovery converges `persistent` routes, restores unexpired dynamic leases from RouterOS comments, and schedules expired dynamic routes for cleanup. Failed scans retry with backoff.
+- Periodic reconciliation maintains `persistent` desired state only. Dynamic routes are DNS observations, so manual edits are not periodically overwritten; a later observation of the same IP may update the route.
+- A finite dynamic lease becomes eligible for another write after 75% of its TTL has elapsed or five minutes have passed since the previous successful write, whichever occurs first. The plugin never initiates DNS refreshes itself.
+
+### Typical Uses
+
+- Import addresses resolved for selected domains into a RouterOS policy-routing table.
+- Maintain dynamic destination host routes for proxy, VPN, or dedicated uplinks.
+- Maintain a small set of DNS-independent fixed networks through `persistent`.
+
+<Admonition type="note" title="Notes">
+
+- `ros_route` has no quick setup form; use a full plugin definition.
+- The plugin manages static routes only. It does not create RouterOS routing tables, routing rules, or default routes. Invalid gateway or routing-table values generally surface on the first real write.
+- Dynamic leases have no entry-count limit, and routes with `fixed_ttl: 0` do not expire naturally. Plan RouterOS routing-table and OxiDNS memory capacity accordingly.
+- Multiple OxiDNS instances must not concurrently manage the same `comment_prefix`, plugin `tag`, and `routing_table` combination. Use separate ownership namespaces during rolling deployment or ensure the old writer has stopped.
+- Application reload shuts down the old instance before starting the replacement, and pending observations are not transferred. With `cleanup_on_shutdown: true`, rebuilding routes may create a policy gap; use `false` when continuity is required.
+
+</Admonition>
 
 ---

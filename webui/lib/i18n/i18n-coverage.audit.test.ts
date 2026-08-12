@@ -143,6 +143,34 @@ function auditFieldDocs(
   }
 }
 
+function auditRequiredFieldDocs(
+  fields: ConfigField[],
+  parentPath: string | undefined,
+  missing: string[],
+) {
+  for (const field of fields) {
+    const path = parentPath ? `${parentPath}.${field.key}` : field.key;
+    if (typeof field.docs !== "string" || field.docs.trim().length === 0) {
+      missing.push(path);
+    }
+    if (field.fields) {
+      auditRequiredFieldDocs(field.fields, path, missing);
+    }
+    if (field.item?.type === "object") {
+      auditRequiredFieldDocs(field.item.fields, `${path}[]`, missing);
+    }
+    for (const item of field.itemOptions ?? []) {
+      if (item.type === "object") {
+        auditRequiredFieldDocs(
+          item.fields,
+          `${path}.$${childKey(item)}`,
+          missing,
+        );
+      }
+    }
+  }
+}
+
 describe("plugin localization audit", () => {
   for (const locale of LOCALES) {
     it(locale, () => {
@@ -205,5 +233,27 @@ describe("plugin localization audit", () => {
 
   it("keeps English resources free of Chinese fallback text", () => {
     expect(JSON.stringify(resources["en-US"])).not.toMatch(/[\u4e00-\u9fff]/u);
+  });
+
+  it("keeps ros_route field and metric documentation complete", () => {
+    const definition = pluginKindDefinitions.find(
+      (candidate) => candidate.kind === "ros_route",
+    );
+    expect(definition).toBeDefined();
+    if (!definition) return;
+
+    const missingFieldDocs: string[] = [];
+    auditRequiredFieldDocs(
+      definition.configSchema,
+      undefined,
+      missingFieldDocs,
+    );
+    expect(missingFieldDocs, missingFieldDocs.join("\n")).toEqual([]);
+
+    const metricLabels = Object.keys(
+      definition.metrics?.metricLabels ?? {},
+    ).sort();
+    const metricHelp = Object.keys(definition.metrics?.metricHelp ?? {}).sort();
+    expect(metricHelp).toEqual(metricLabels);
   });
 });
