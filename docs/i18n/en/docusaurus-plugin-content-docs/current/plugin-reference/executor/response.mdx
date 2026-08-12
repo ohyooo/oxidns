@@ -259,6 +259,14 @@ Biases dual-stack results toward one address family.
 - Preferred-family queries pass through normally and warm the preference cache when they return preferred-family answers.
 - Non-preferred-family queries are blocked immediately when the cache says the preferred family exists; otherwise `prefer_ipv4` / `prefer_ipv6` runs the downstream chain concurrently for the original query and a preferred-family probe.
 
+### Subquery and Context Isolation
+
+- The preferred-family query is an internal availability probe, not a replacement response for the client request. When the probe succeeds, the outer context keeps the original QTYPE and generates a `NOERROR/NODATA` response for that request.
+- On a cache miss, the original query and the preferred-family probe run the downstream chain in isolated `DnsContext` instances. Marks, runtime extensions, and execution-path events produced by the preferred probe are not merged into the outer context; after suppression, the outer marks therefore remain as they were when the selector was entered.
+- If the preferred probe has no answer, fails, or times out and the original result is used, the complete original subquery result, including its marks, becomes the outer result.
+- This isolation keeps a live probe hit consistent with a direct cache hit: neither exposes preferred-probe state to outer post-processing plugins, and marks must not be used to infer internal probe outcomes.
+- A non-preferred cache miss may execute the chain after the selector twice. Do not place executors with logging, counting, learning, scripts, webhooks, or other non-idempotent side effects in that probe path unless duplicate execution is explicitly acceptable.
+
 ### Typical Uses
 
 - Prefer the family that works better on a given network
