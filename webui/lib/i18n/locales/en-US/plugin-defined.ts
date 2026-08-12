@@ -988,6 +988,12 @@ export const enUSPluginDefined = {
       description:
         "Dual-stack optimizer that favors A records and suppresses alternative AAAA requests",
       fields: {
+        probe_executor: {
+          label: "Probe executor",
+          description:
+            "Specifies the executor used only for the internal preferred-QTYPE probe.",
+          placeholder: "probe_v4",
+        },
         cache: {
           label: "Cache preference status",
           description:
@@ -1004,6 +1010,12 @@ export const enUSPluginDefined = {
       description:
         "Dual stack optimizer, favoring AAAA records and suppressing alternative A requests",
       fields: {
+        probe_executor: {
+          label: "Probe executor",
+          description:
+            "Specifies the executor used only for the internal preferred-QTYPE probe.",
+          placeholder: "probe_v6",
+        },
         cache: {
           label: "Cache preference status",
           description:

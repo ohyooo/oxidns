@@ -896,6 +896,11 @@ export const zhCNPluginDefined = {
       name: "Prefer IPv4",
       description: "双栈优选器，偏好 A 记录并抑制可替代的 AAAA 请求",
       fields: {
+        probe_executor: {
+          label: "探针执行器",
+          description: "指定仅用于 preferred QTYPE 内部探针的执行器。",
+          placeholder: "probe_v4",
+        },
         cache: {
           label: "缓存偏好状态",
           description: "控制是否缓存 preferred 类型存在状态。",
@@ -910,6 +915,11 @@ export const zhCNPluginDefined = {
       name: "Prefer IPv6",
       description: "双栈优选器，偏好 AAAA 记录并抑制可替代的 A 请求",
       fields: {
+        probe_executor: {
+          label: "探针执行器",
+          description: "指定仅用于 preferred QTYPE 内部探针的执行器。",
+          placeholder: "probe_v6",
+        },
         cache: {
           label: "缓存偏好状态",
           description: "控制是否缓存 preferred 类型存在状态。",

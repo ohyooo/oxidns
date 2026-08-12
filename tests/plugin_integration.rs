@@ -868,6 +868,182 @@ plugins:
 }
 
 #[tokio::test]
+async fn test_dual_selector_uses_dedicated_probe_executor_and_isolates_marks() -> Result<()> {
+    let yaml = r#"
+log:
+  level: info
+plugins:
+  - tag: probe_hosts
+    type: hosts
+    args:
+      entries:
+        - "full:example.com 192.0.2.10"
+  - tag: prefer_v4
+    type: prefer_ipv4
+    args:
+      probe_executor: probe_hosts
+      cache: false
+  - tag: main
+    type: sequence
+    args:
+      - exec: mark 1
+      - exec: $prefer_v4
+      - exec: mark 10
+      - exec: reject SERVFAIL
+"#;
+
+    let config = parse_config(yaml)?;
+    let report = plugin::analyze_configuration(&config)?;
+    assert!(report.edges.iter().any(|edge| {
+        edge.source_tag == "prefer_v4"
+            && edge.target_tag == "probe_hosts"
+            && edge.field == "args.probe_executor"
+    }));
+
+    let registry = plugin::init(config).await?;
+    let sequence = registry
+        .get_plugin("main")
+        .expect("main sequence should exist")
+        .to_executor();
+    let mut context = make_context_with_qtype(registry.clone(), "example.com.", RecordType::AAAA);
+
+    let step = sequence.execute(&mut context).await?;
+
+    assert_eq!(step, ExecStep::Stop);
+    assert_eq!(context.request().first_qtype(), Some(RecordType::AAAA));
+    let response = context
+        .response()
+        .expect("preferred probe should suppress AAAA");
+    assert_eq!(response.rcode(), Rcode::NoError);
+    assert!(response.answers().is_empty());
+    assert!(context.marks().contains(&1));
+    assert!(!context.marks().contains(&10));
+
+    registry.destroy().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_dual_selector_accepts_sequence_as_dedicated_probe_executor() -> Result<()> {
+    let yaml = r#"
+log:
+  level: info
+plugins:
+  - tag: probe_hosts
+    type: hosts
+    args:
+      entries:
+        - "full:example.com 192.0.2.10"
+  - tag: probe_sequence
+    type: sequence
+    args:
+      - exec: mark 20
+      - exec: $probe_hosts
+  - tag: prefer_v4
+    type: prefer_ipv4
+    args:
+      probe_executor: probe_sequence
+      cache: false
+  - tag: main
+    type: sequence
+    args:
+      - exec: mark 1
+      - exec: $prefer_v4
+      - exec: mark 10
+      - exec: reject SERVFAIL
+"#;
+
+    let config = parse_config(yaml)?;
+    let registry = plugin::init(config).await?;
+    let sequence = registry
+        .get_plugin("main")
+        .expect("main sequence should exist")
+        .to_executor();
+    let mut context = make_context_with_qtype(registry.clone(), "example.com.", RecordType::AAAA);
+
+    sequence.execute(&mut context).await?;
+
+    assert_eq!(
+        context
+            .response()
+            .expect("preferred probe should suppress AAAA")
+            .rcode(),
+        Rcode::NoError
+    );
+    assert!(context.marks().contains(&1));
+    assert!(!context.marks().contains(&10));
+    assert!(!context.marks().contains(&20));
+
+    registry.destroy().await;
+    Ok(())
+}
+
+#[test]
+fn test_dual_selector_probe_executor_dependency_validation() -> Result<()> {
+    let missing = parse_config(
+        r#"
+plugins:
+  - tag: prefer_v4
+    type: prefer_ipv4
+    args:
+      probe_executor: missing
+"#,
+    )?;
+    let err = plugin::analyze_configuration(&missing)
+        .expect_err("missing probe executor should fail dependency analysis");
+    assert!(err.to_string().contains("missing plugin 'missing'"));
+    assert!(err.to_string().contains("args.probe_executor"));
+
+    let wrong_kind = parse_config(
+        r#"
+plugins:
+  - tag: not_executor
+    type: _true
+  - tag: prefer_v4
+    type: prefer_ipv4
+    args:
+      probe_executor: not_executor
+"#,
+    )?;
+    let err = plugin::analyze_configuration(&wrong_kind)
+        .expect_err("non-executor probe target should fail dependency analysis");
+    assert!(err.to_string().contains("expects executor"));
+    assert!(err.to_string().contains("not_executor"));
+
+    let self_reference = parse_config(
+        r#"
+plugins:
+  - tag: prefer_v4
+    type: prefer_ipv4
+    args:
+      probe_executor: prefer_v4
+"#,
+    )?;
+    let err = plugin::analyze_configuration(&self_reference)
+        .expect_err("self-referenced probe executor should fail dependency analysis");
+    assert!(err.to_string().contains("references itself"));
+
+    let cycle = parse_config(
+        r#"
+plugins:
+  - tag: prefer_a
+    type: prefer_ipv4
+    args:
+      probe_executor: prefer_b
+  - tag: prefer_b
+    type: prefer_ipv6
+    args:
+      probe_executor: prefer_a
+"#,
+    )?;
+    let err = plugin::analyze_configuration(&cycle)
+        .expect_err("probe executor cycle should fail dependency analysis");
+    assert!(err.to_string().contains("Circular dependency detected"));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_sequence_supports_single_match_string_dependency_and_execution() -> Result<()> {
     let yaml = r#"
 log:

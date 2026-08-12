@@ -219,12 +219,16 @@ export const enUSDocs = {
       "- Type: `integer`; required: no; default value: `60`\n- Unit: seconds\n- Function: Define the retention time of failed detection scores.\n- Configuration requirements: Must be greater than 0 when caching is enabled.\n- Operational impact: Failure caching can prevent unreachable addresses from being repeatedly detected in a short period of time, while allowing faster recovery.",
   },
   prefer_ipv4: {
+    probe_executor:
+      "- Type: `string`; required: no; default: unset (compatibility continuation probe mode)\n- Purpose: References an executor used only for the internal preferred-QTYPE probe. Enter a plain executor tag without `$`.\n- Runtime impact: May reference `forward`, `sequence`, or another executor that can independently produce a DNS response. Probe marks, extensions, and execution-path state stay isolated from the outer context.\n- Cache limitation: Disable `cache` when the probe result depends on the client, marks, randomness, rate limits, or other request-scoped state.",
     cache:
       "- Type: `boolean`; required: no; default value: `true`\n- Function: Control whether to cache the preferred type existence status.",
     cache_ttl:
       "- Type: `integer`; Required: No; Default: `3600`\n- Unit: seconds\n- Function: Define preferred status cache duration.",
   },
   prefer_ipv6: {
+    probe_executor:
+      "- Type: `string`; required: no; default: unset (compatibility continuation probe mode)\n- Purpose: References an executor used only for the internal preferred-QTYPE probe. Enter a plain executor tag without `$`.\n- Runtime impact: May reference `forward`, `sequence`, or another executor that can independently produce a DNS response. Probe marks, extensions, and execution-path state stay isolated from the outer context.\n- Cache limitation: Disable `cache` when the probe result depends on the client, marks, randomness, rate limits, or other request-scoped state.",
     cache:
       "- Type: `boolean`; required: no; default value: `true`\n- Function: Control whether to cache the preferred type existence status.",
     cache_ttl:
