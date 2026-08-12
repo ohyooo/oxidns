@@ -667,6 +667,14 @@ export const executorPluginDefinitions: PluginKindDefinition[] = [
     ],
   },
   {
+    kind: "client_ip_from_ecs",
+    type: "executor",
+    name: "Client IP From ECS",
+    description: "使用 EDNS Client Subnet 地址覆盖当前请求的客户端 IP",
+    icon: "Network",
+    configSchema: [],
+  },
+  {
     kind: "ecs_handler",
     type: "executor",
     name: "ECS Handler",

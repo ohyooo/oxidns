@@ -766,6 +766,58 @@ Common `sequence` usage:
 
 ---
 
+## `client_ip_from_ecs`
+
+### Purpose
+
+Sets the current `DnsContext` client IP from the request's EDNS Client Subnet
+(ECS) address. This is intended for deployments behind dnsmasq where
+`--add-subnet=32,128` forwards the complete requester address.
+
+### Example Configuration
+
+```yaml
+- tag: ecs_client
+  type: client_ip_from_ecs
+
+- tag: main
+  type: sequence
+  args:
+    # Run before matchers, logging, or recorders that consume the client IP.
+    - exec: $ecs_client
+    - matches: client_ip 192.168.1.0/24
+      exec: $forward_main
+```
+
+It can also be used through sequence quick setup:
+
+```yaml
+- exec: client_ip_from_ecs
+```
+
+### Behavior
+
+- Replaces the client IP when ECS exists and its source prefix is non-zero,
+  while preserving the original connection port.
+- Makes no change when ECS is absent or its source prefix is `0`.
+- Supports IPv4 and IPv6 and normalizes IPv4-mapped IPv6 addresses.
+- Does not alter or remove ECS; configure `ecs_handler` separately for ECS
+  forwarding or cleanup.
+- The change is request-local. Subsequent `client_ip` matchers, templates, and
+  the query recorder observe the new address.
+
+<Admonition type="warning" title="Trust boundary">
+
+Requesters can forge ECS. Enable this only when OxiDNS accepts queries solely
+from a trusted dnsmasq, and configure dnsmasq with `--strip-subnet` plus
+`--add-subnet=32,128` so it replaces downstream ECS. Prefixes shorter than
+`/32` or `/128` carry only a truncated network address and cannot recover the
+complete client IP.
+
+</Admonition>
+
+---
+
 ## `ecs_handler`
 
 ### Purpose

@@ -34,6 +34,7 @@ pub use crate::plugin::executor::sequence::chain::ExecutorNext;
 pub mod arbitrary;
 pub mod black_hole;
 pub mod cache;
+pub mod client_ip_from_ecs;
 #[cfg(feature = "plugin-cron")]
 pub mod cron;
 pub mod debug_print;

@@ -86,7 +86,7 @@ See [Configuration](https://oxidns.org/en/configuration) and [Common Scenarios](
 | Protocol ingress | UDP, TCP, DoT, DoQ, DoH over HTTP/1.1, HTTP/2, and HTTP/3 |
 | Policy orchestration | `sequence`, conditional matching, executor composition, jumps, and fallback chains |
 | Upstreams and egress | Multi-protocol upstreams, concurrent response selection, connection reuse, bootstrap, SOCKS5, unified `network.outbound` |
-| Response processing | TTL-aware positive and negative caching, ECS, local records, redirects, response construction, dual-stack and IP selection |
+| Response processing | TTL-aware positive and negative caching, ECS and ECS-derived client IPs, local records, redirects, response construction, dual-stack and IP selection |
 | Rule data | Domain and IP sets, GeoIP, GeoSite, AdGuard rules, dynamic domain learning |
 | System integrations | Linux `ipset` / `nftset`, RouterOS address lists / static routes, HTTP webhooks, external scripts |
 | Observability | Query auditing and execution paths, real-time logs, Prometheus metrics, upstream probes, health checks |

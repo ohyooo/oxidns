@@ -811,6 +811,54 @@ old-static.example.com static.example.net
 
 ---
 
+## `client_ip_from_ecs`
+
+### 作用
+
+把请求 EDNS Client Subnet（ECS）中的地址设为当前 `DnsContext` 的客户端 IP。
+这适用于 OxiDNS 位于 dnsmasq 后方、dnsmasq 使用 `--add-subnet=32,128`
+转发完整请求方地址的场景。
+
+### 配置示例
+
+```yaml
+- tag: ecs_client
+  type: client_ip_from_ecs
+
+- tag: main
+  type: sequence
+  args:
+    # 必须放在依赖客户端 IP 的 matcher、日志或记录器之前
+    - exec: $ecs_client
+    - matches: client_ip 192.168.1.0/24
+      exec: $forward_main
+```
+
+也可在 sequence 中使用 quick setup：
+
+```yaml
+- exec: client_ip_from_ecs
+```
+
+### 行为说明
+
+- ECS 存在且 source prefix 非零时，覆盖客户端 IP，但保留原连接端口。
+- ECS 缺失或 source prefix 为 `0` 时不做修改。
+- 支持 IPv4 和 IPv6，也会规范化 IPv4-mapped IPv6 地址。
+- 不修改或删除 ECS；如需 ECS 转发/清理，另行配置 `ecs_handler`。
+- 修改仅限当前请求上下文，后续 `client_ip` matcher、模板和 query recorder
+  会读取新地址。
+
+<Admonition type="warning" title="信任边界">
+
+ECS 可由请求方伪造。只应在 OxiDNS 仅接受受信任 dnsmasq 转发请求时启用，
+并让 dnsmasq 使用 `--strip-subnet` 配合 `--add-subnet=32,128` 替换下游 ECS。
+小于 `/32` 或 `/128` 的 ECS 只能提供截断后的网段地址，无法还原完整客户端 IP。
+
+</Admonition>
+
+---
+
 ## `ecs_handler`
 
 ### 作用
