@@ -69,6 +69,26 @@ if (!forwardDefinition || !fallbackDefinition) {
   throw new Error("forward and fallback executor definitions must exist");
 }
 
+describe("client_ip_from_ecs plugin definition", () => {
+  it("is registered and localized for both WebUI locales", () => {
+    const definition = executorPluginDefinitions.find(
+      (candidate) => candidate.kind === "client_ip_from_ecs",
+    );
+
+    expect(definition).toMatchObject({
+      kind: "client_ip_from_ecs",
+      type: "executor",
+      configSchema: [],
+    });
+    expect(
+      getLocalizedPluginKindDefinition("client_ip_from_ecs", "zh-CN")?.name,
+    ).toBe("从 ECS 获取客户端 IP");
+    expect(
+      getLocalizedPluginKindDefinition("client_ip_from_ecs", "en-US")?.name,
+    ).toBe("Client IP From ECS");
+  });
+});
+
 describe("time matcher config form", () => {
   it("normalizes legacy weekday aliases to ISO numbers while preserving monthdays", () => {
     const config = {

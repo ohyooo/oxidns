@@ -793,6 +793,11 @@ export const enUSPluginDefined = {
         },
       },
     },
+    client_ip_from_ecs: {
+      name: "Client IP From ECS",
+      description:
+        "Use the EDNS Client Subnet address as the request-local client IP for subsequent matchers and recorders",
+    },
     ecs_handler: {
       name: "ECS Handler",
       description:

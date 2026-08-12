@@ -715,6 +715,11 @@ export const zhCNPluginDefined = {
         },
       },
     },
+    client_ip_from_ecs: {
+      name: "从 ECS 获取客户端 IP",
+      description:
+        "使用 EDNS Client Subnet 地址覆盖当前请求的客户端 IP，供后续匹配器和记录器使用",
+    },
     ecs_handler: {
       name: "ECS Handler",
       description: "处理 EDNS Client Subnet 的保留、注入和回程清理",
