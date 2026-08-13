@@ -8,11 +8,7 @@ import {
 
 const EXPECTED_ADVANCED_FIELDS: Record<string, string[]> = {
   "server/tcp_server": ["idle_timeout"],
-  "server/http_server": [
-    "entries[].json_api",
-    "idle_timeout",
-    "enable_http3",
-  ],
+  "server/http_server": ["entries[].json_api", "idle_timeout", "enable_http3"],
   "server/quic_server": ["idle_timeout"],
   "executor/forward": [
     "concurrent",
@@ -187,7 +183,7 @@ function collectRequiredAdvancedPaths(
 
 describe("plugin advanced field classification", () => {
   it("covers the complete plugin registry with the reviewed field paths", () => {
-    expect(pluginKindDefinitions).toHaveLength(64);
+    expect(pluginKindDefinitions).toHaveLength(65);
 
     const actual = Object.fromEntries(
       pluginKindDefinitions

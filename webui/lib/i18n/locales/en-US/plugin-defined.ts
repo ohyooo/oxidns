@@ -804,7 +804,7 @@ export const enUSPluginDefined = {
             "Use ECS only when the original client IP matches this allow-list; empty args default to 127.0.0.1 and ::1.",
           placeholder: "127.0.0.1\n10.0.0.0/24\n::1",
         },
-        "args[]": {
+        "args.$input": {
           label: "IP or CIDR",
           placeholder: "127.0.0.1",
         },

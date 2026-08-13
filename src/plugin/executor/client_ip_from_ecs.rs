@@ -5,10 +5,11 @@
 //!
 //! Replaces the request-local client IP with the address carried by an EDNS
 //! Client Subnet (ECS) option, such as one added by dnsmasq `--add-subnet`.
-//! `args` is a required array of trusted original client IPs or CIDR prefixes.
-//! ECS is used only when the transport peer matches this allow-list. Place the
-//! plugin before client-IP matchers and recorders. It performs no allocation,
-//! locking, or I/O on the request path.
+//! `args` is an optional array of trusted original client IPs or CIDR prefixes;
+//! missing or empty args trust only IPv4 and IPv6 loopback. ECS is used only
+//! when the transport peer matches this allow-list. Place the plugin before
+//! client-IP matchers and recorders. It performs no allocation, locking, or I/O
+//! on the request path.
 
 use std::net::SocketAddr;
 
