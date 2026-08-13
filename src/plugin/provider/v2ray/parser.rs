@@ -9,6 +9,8 @@ use prost::Message;
 
 use super::model::{Cidr, Domain, DomainType, GeoIp, GeoIpList, GeoSite, GeoSiteList, attribute};
 
+const MAX_PROTOBUF_GROUP_DEPTH: usize = 100;
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ParsedDat {
     GeoSite(GeoSiteList),
@@ -163,7 +165,7 @@ where
                 .map_err(|error| format!("failed to decode protobuf entry: {error}"))?;
             on_entry(entry)?;
         } else {
-            skip_field(&mut reader, wire, field)?;
+            skip_field(&mut reader, wire, field, 0)?;
         }
     }
     Ok(())
@@ -199,7 +201,12 @@ fn read_varint(reader: &mut impl Read, allow_clean_eof: bool) -> Result<Option<u
     Err("protobuf varint is too long".to_string())
 }
 
-fn skip_field(reader: &mut impl Read, wire: u8, field: u64) -> Result<(), String> {
+fn skip_field(
+    reader: &mut impl Read,
+    wire: u8,
+    field: u64,
+    group_depth: usize,
+) -> Result<(), String> {
     match wire {
         0 => {
             read_required_varint(reader)?;
@@ -211,18 +218,25 @@ fn skip_field(reader: &mut impl Read, wire: u8, field: u64) -> Result<(), String
                 .map_err(|_| "protobuf field length exceeds platform limits".to_string())?;
             skip_bytes(reader, len)
         }
-        3 => loop {
-            let key = read_required_varint(reader)?;
-            let nested_field = key >> 3;
-            let nested_wire = (key & 7) as u8;
-            if nested_wire == 4 {
-                if nested_field != field {
-                    return Err("mismatched protobuf end-group field".to_string());
-                }
-                return Ok(());
+        3 => {
+            if group_depth >= MAX_PROTOBUF_GROUP_DEPTH {
+                return Err(format!(
+                    "protobuf group nesting exceeds limit of {MAX_PROTOBUF_GROUP_DEPTH}"
+                ));
             }
-            skip_field(reader, nested_wire, nested_field)?;
-        },
+            loop {
+                let key = read_required_varint(reader)?;
+                let nested_field = key >> 3;
+                let nested_wire = (key & 7) as u8;
+                if nested_wire == 4 {
+                    if nested_field != field {
+                        return Err("mismatched protobuf end-group field".to_string());
+                    }
+                    return Ok(());
+                }
+                skip_field(reader, nested_wire, nested_field, group_depth + 1)?;
+            }
+        }
         4 => Err("unexpected protobuf end-group field".to_string()),
         5 => skip_bytes(reader, 4),
         _ => Err(format!("invalid protobuf wire type {wire}")),
@@ -350,5 +364,22 @@ mod streaming_tests {
         file.write_all(&[0x02]).unwrap();
         let error = visit_geosite_file(file.path(), |_| Ok(())).unwrap_err();
         assert!(error.contains("overflows u64"), "{error}");
+    }
+
+    #[test]
+    fn accepts_unknown_groups_at_recursion_limit() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(&[0x13; MAX_PROTOBUF_GROUP_DEPTH]).unwrap();
+        file.write_all(&[0x14; MAX_PROTOBUF_GROUP_DEPTH]).unwrap();
+        visit_geosite_file(file.path(), |_| Ok(())).unwrap();
+    }
+
+    #[test]
+    fn rejects_unknown_groups_beyond_recursion_limit() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(&[0x13; MAX_PROTOBUF_GROUP_DEPTH + 1])
+            .unwrap();
+        let error = visit_geosite_file(file.path(), |_| Ok(())).unwrap_err();
+        assert!(error.contains("group nesting exceeds limit"), "{error}");
     }
 }

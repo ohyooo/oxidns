@@ -159,11 +159,7 @@ pub(crate) struct FullDomainMatcher {
 }
 
 impl FullDomainMatcher {
-    #[cfg(any(
-        feature = "provider-adguard-rule",
-        feature = "provider-protobuf",
-        feature = "plugin-dynamic-domain"
-    ))]
+    #[allow(dead_code)]
     #[inline]
     pub(crate) fn reserve(&mut self, additional: usize) {
         self.rules.reserve(additional);
@@ -230,11 +226,7 @@ pub(crate) struct KeywordDomainMatcher {
 }
 
 impl KeywordDomainMatcher {
-    #[cfg(any(
-        feature = "provider-adguard-rule",
-        feature = "provider-protobuf",
-        feature = "plugin-dynamic-domain"
-    ))]
+    #[allow(dead_code)]
     #[inline]
     pub(crate) fn reserve(&mut self, additional: usize) {
         self.pending_patterns.reserve(additional);
@@ -290,11 +282,7 @@ pub(crate) struct RegexpDomainMatcher {
 }
 
 impl RegexpDomainMatcher {
-    #[cfg(any(
-        feature = "provider-adguard-rule",
-        feature = "provider-protobuf",
-        feature = "plugin-dynamic-domain"
-    ))]
+    #[allow(dead_code)]
     #[inline]
     pub(crate) fn reserve(&mut self, additional: usize) {
         self.pending_patterns.reserve(additional);
@@ -351,11 +339,7 @@ pub struct DomainRuleMatcher {
 
 impl DomainRuleMatcher {
     /// Reserve storage for each rule family before bulk loading.
-    #[cfg(any(
-        feature = "provider-adguard-rule",
-        feature = "provider-protobuf",
-        feature = "plugin-dynamic-domain"
-    ))]
+    #[allow(dead_code)]
     pub(crate) fn reserve_rules(&mut self, full: usize, keyword: usize, regexp: usize) {
         if full > 0 {
             self.full

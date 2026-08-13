@@ -10,7 +10,7 @@
 
 use std::fmt::{Display, Formatter};
 use std::fs::File;
-use std::io::{self, BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, Seek};
 use std::path::PathBuf;
 
 const TEXT_READER_CAPACITY: usize = 256 * 1024;
@@ -36,6 +36,33 @@ impl<'a> TextSource<'a> {
         }
     }
 
+    /// Open a stable set of file handles that can be replayed across scans.
+    ///
+    /// Atomic path replacement after this call does not change the files seen
+    /// by subsequent scans because every pass rewinds the same handles. The
+    /// session does not retain file contents or per-file reader buffers.
+    #[allow(dead_code)]
+    pub(crate) fn open_replay(
+        &self,
+    ) -> Result<TextSourceSession<'a>, TextScanError<std::convert::Infallible>> {
+        let mut files = Vec::with_capacity(self.files.len());
+        for path in self.files {
+            if path.trim().is_empty() {
+                continue;
+            }
+            let file = File::open(path).map_err(|source| TextScanError::Open {
+                path: PathBuf::from(path),
+                source,
+            })?;
+            files.push(OpenTextFile { path, file });
+        }
+        Ok(TextSourceSession {
+            inline_field: self.inline_field,
+            inline: self.inline,
+            files,
+        })
+    }
+
     /// Scan inline values and then every physical file line.
     ///
     /// Each call reopens the configured files. The borrowed line text is valid
@@ -49,13 +76,7 @@ impl<'a> TextSource<'a> {
     where
         F: FnMut(TextLine<'_>) -> Result<(), E>,
     {
-        for (index, raw) in self.inline.iter().enumerate() {
-            let location = TextLocation::Inline {
-                field: self.inline_field,
-                index,
-            };
-            visit_line(raw, location, classifier, &mut visitor)?;
-        }
+        visit_inline(self.inline_field, self.inline, classifier, &mut visitor)?;
 
         let mut buffer = String::with_capacity(256);
         for path in self.files {
@@ -67,34 +88,115 @@ impl<'a> TextSource<'a> {
                 source,
             })?;
             let mut reader = BufReader::with_capacity(TEXT_READER_CAPACITY, file);
-            let mut line_no = 0usize;
-            loop {
-                buffer.clear();
-                let bytes =
-                    reader
-                        .read_line(&mut buffer)
-                        .map_err(|source| TextScanError::Read {
-                            path: PathBuf::from(path),
-                            line: line_no + 1,
-                            source,
-                        })?;
-                if bytes == 0 {
-                    break;
-                }
-                line_no += 1;
-                remove_line_ending(&mut buffer);
-                visit_line(
-                    &buffer,
-                    TextLocation::File {
-                        path,
-                        line: line_no,
-                    },
-                    classifier,
-                    &mut visitor,
-                )?;
-            }
+            visit_reader(&mut reader, path, classifier, &mut buffer, &mut visitor)?;
         }
         Ok(())
+    }
+}
+
+/// An opened text source whose file identities remain stable across scans.
+#[derive(Debug)]
+#[allow(dead_code)]
+pub(crate) struct TextSourceSession<'a> {
+    inline_field: &'a str,
+    inline: &'a [String],
+    files: Vec<OpenTextFile<'a>>,
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+struct OpenTextFile<'a> {
+    path: &'a str,
+    file: File,
+}
+
+impl TextSourceSession<'_> {
+    /// Replay inline values and the opened files from their beginnings.
+    #[allow(dead_code)]
+    pub(crate) fn scan<E, F>(
+        &mut self,
+        classifier: &LineClassifier<'_>,
+        mut visitor: F,
+    ) -> Result<(), TextScanError<E>>
+    where
+        F: FnMut(TextLine<'_>) -> Result<(), E>,
+    {
+        visit_inline(self.inline_field, self.inline, classifier, &mut visitor)?;
+
+        let mut buffer = String::with_capacity(256);
+        for opened in &mut self.files {
+            opened.file.rewind().map_err(|source| TextScanError::Read {
+                path: PathBuf::from(opened.path),
+                line: 1,
+                source,
+            })?;
+            let mut reader = BufReader::with_capacity(TEXT_READER_CAPACITY, &mut opened.file);
+            visit_reader(
+                &mut reader,
+                opened.path,
+                classifier,
+                &mut buffer,
+                &mut visitor,
+            )?;
+        }
+        Ok(())
+    }
+}
+
+fn visit_inline<E, F>(
+    field: &str,
+    inline: &[String],
+    classifier: &LineClassifier<'_>,
+    visitor: &mut F,
+) -> Result<(), TextScanError<E>>
+where
+    F: FnMut(TextLine<'_>) -> Result<(), E>,
+{
+    for (index, raw) in inline.iter().enumerate() {
+        visit_line(
+            raw,
+            TextLocation::Inline { field, index },
+            classifier,
+            visitor,
+        )?;
+    }
+    Ok(())
+}
+
+fn visit_reader<E, F>(
+    reader: &mut impl BufRead,
+    path: &str,
+    classifier: &LineClassifier<'_>,
+    buffer: &mut String,
+    visitor: &mut F,
+) -> Result<(), TextScanError<E>>
+where
+    F: FnMut(TextLine<'_>) -> Result<(), E>,
+{
+    let mut line_no = 0usize;
+    loop {
+        buffer.clear();
+        let bytes = reader
+            .read_line(buffer)
+            .map_err(|source| TextScanError::Read {
+                path: PathBuf::from(path),
+                line: line_no + 1,
+                source,
+            })?;
+        if bytes == 0 {
+            return Ok(());
+        }
+        line_no += 1;
+        remove_line_ending(buffer);
+        visit_line(
+            buffer,
+            TextLocation::File {
+                path,
+                line: line_no,
+            },
+            classifier,
+            visitor,
+        )?;
     }
 }
 
@@ -372,6 +474,48 @@ mod tests {
                 .unwrap();
             assert_eq!(lines, 2);
         }
+    }
+
+    #[test]
+    fn replay_session_keeps_opened_file_snapshot_after_path_replacement() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("rules.txt");
+        let replacement = dir.path().join("replacement.txt");
+        std::fs::write(&path, "old\n").unwrap();
+        std::fs::write(&replacement, "new\n").unwrap();
+        let files = vec![path.display().to_string()];
+        let source = TextSource::new("rules", &[], &files);
+        let mut session = source.open_replay().unwrap();
+
+        let mut first = Vec::new();
+        session
+            .scan(&LineClassifier::default(), |line| {
+                first.push(line.raw().to_owned());
+                Ok::<_, String>(())
+            })
+            .unwrap();
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::rename(&replacement, &path).unwrap();
+
+        let mut replayed = Vec::new();
+        session
+            .scan(&LineClassifier::default(), |line| {
+                replayed.push(line.raw().to_owned());
+                Ok::<_, String>(())
+            })
+            .unwrap();
+        assert_eq!(first, vec!["old"]);
+        assert_eq!(replayed, first);
+
+        let mut reopened = Vec::new();
+        source
+            .scan(&LineClassifier::default(), |line| {
+                reopened.push(line.raw().to_owned());
+                Ok::<_, String>(())
+            })
+            .unwrap();
+        assert_eq!(reopened, vec!["new"]);
     }
 
     #[test]

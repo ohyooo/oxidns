@@ -28,7 +28,7 @@ use crate::infra::error::{DnsError, Result as DnsResult};
 /// Snapshot owners intentionally perform publication themselves after this
 /// helper succeeds, so cancellation, panic, and build failure all leave the
 /// currently published state untouched.
-#[cfg(feature = "plugin-dynamic-domain")]
+#[allow(dead_code)]
 pub(crate) async fn spawn_blocking_result<T, F>(task_name: &str, task: F) -> DnsResult<T>
 where
     T: Send + 'static,

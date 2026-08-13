@@ -10,4 +10,5 @@ mod text_source;
 #[allow(unused_imports)]
 pub(crate) use text_source::{
     LineAnnotations, LineClassifier, TextLine, TextLocation, TextScanError, TextSource,
+    TextSourceSession,
 };

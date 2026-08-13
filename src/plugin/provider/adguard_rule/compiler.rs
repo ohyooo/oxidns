@@ -12,7 +12,7 @@ use super::syntax::{
 };
 use crate::core::rule_matcher::DomainRuleKind;
 use crate::infra::error::{DnsError, Result as DnsResult};
-use crate::infra::io::{LineClassifier, TextLocation, TextSource};
+use crate::infra::io::{LineClassifier, TextLocation, TextSource, TextSourceSession};
 
 const MAX_SKIP_SAMPLES: usize = 5;
 const MAX_SAMPLE_RULE_CHARS: usize = 160;
@@ -149,14 +149,19 @@ pub(super) fn build_rule_buckets(
     CompiledRuleSet,
     BuildStats,
 )> {
-    let (badfilter_keys, capacities) = plan_build(tag, cfg)?;
+    let source = TextSource::new("args.rules", &cfg.rules, &cfg.files);
+    let classifier = LineClassifier::new(&["!", "#"]);
+    let mut session = source.open_replay().map_err(|error| {
+        DnsError::plugin(format!(
+            "adguard_rule '{tag}' failed to open rule sources: {error}"
+        ))
+    })?;
+    let (badfilter_keys, capacities) = plan_build(tag, &mut session, &classifier)?;
     let mut buckets = RuleBuckets::with_capacities(capacities);
     let mut stats = BuildStats::default();
     let mut skip_stats: [SkipStats; 5] = std::array::from_fn(|_| SkipStats::default());
 
-    let source = TextSource::new("args.rules", &cfg.rules, &cfg.files);
-    let classifier = LineClassifier::new(&["!", "#"]);
-    source
+    session
         .scan(&classifier, |line| -> Result<(), String> {
             stats.total_rules += 1;
             let raw = line.raw();
@@ -233,40 +238,65 @@ pub(super) fn build_rule_buckets(
 
 fn plan_build(
     tag: &str,
-    cfg: &AdGuardRuleConfig,
+    session: &mut TextSourceSession<'_>,
+    classifier: &LineClassifier<'_>,
 ) -> DnsResult<(AHashSet<BadfilterKey>, BuildCapacities)> {
     let mut badfilter_keys = AHashSet::new();
     let mut capacities = BuildCapacities::default();
 
-    let source = TextSource::new("args.rules", &cfg.rules, &cfg.files);
-    source
-        .scan(
-            &LineClassifier::new(&["!", "#"]),
-            |line| -> Result<(), String> {
-                let ParsedLine::Rule(meta) =
-                    parse_line(line.raw(), line.annotations().leading_comment)?
-                else {
-                    return Ok(());
-                };
+    session
+        .scan(classifier, |line| -> Result<(), String> {
+            let ParsedLine::Rule(meta) =
+                parse_line(line.raw(), line.annotations().leading_comment)?
+            else {
+                return Ok(());
+            };
 
-                // The planning pass validates the complete supported subset. It never
-                // retains a matcher or emits per-line diagnostics.
-                validate_pattern(meta.pattern)?;
-                let details = parse_rule_details(&meta)?;
+            // The planning pass validates the complete supported subset. It never
+            // retains a matcher or emits per-line diagnostics.
+            validate_pattern(meta.pattern)?;
+            let details = parse_rule_details(&meta)?;
 
-                if meta.badfilter {
-                    badfilter_keys.insert(BadfilterKey::new(&meta, details));
-                } else {
-                    capacities.target_mut(&meta).add(&meta)?;
-                }
-                Ok(())
-            },
-        )
+            if meta.badfilter {
+                badfilter_keys.insert(BadfilterKey::new(&meta, details));
+            } else {
+                capacities.target_mut(&meta).add(&meta)?;
+            }
+            Ok(())
+        })
         .map_err(|error| {
             DnsError::plugin(format!(
                 "adguard_rule '{tag}' planning scan failed: {error}"
             ))
         })?;
+
+    // A badfilter is global and order-independent. Once all keys are known,
+    // replay the same opened file snapshot to reserve only for active rules.
+    // This avoids retaining capacity proportional to disabled rules.
+    if !badfilter_keys.is_empty() {
+        capacities = BuildCapacities::default();
+        session
+            .scan(classifier, |line| -> Result<(), String> {
+                let ParsedLine::Rule(meta) =
+                    parse_line(line.raw(), line.annotations().leading_comment)?
+                else {
+                    return Ok(());
+                };
+                if meta.badfilter {
+                    return Ok(());
+                }
+                let details = parse_rule_details(&meta)?;
+                if !badfilter_keys.contains(&rule_cache_key(&meta, &details)) {
+                    capacities.target_mut(&meta).add(&meta)?;
+                }
+                Ok(())
+            })
+            .map_err(|error| {
+                DnsError::plugin(format!(
+                    "adguard_rule '{tag}' active-capacity scan failed: {error}"
+                ))
+            })?;
+    }
 
     Ok((badfilter_keys, capacities))
 }
@@ -337,5 +367,29 @@ mod tests {
         assert_eq!(stats.count, 10);
         assert_eq!(stats.samples.len(), MAX_SKIP_SAMPLES);
         assert!(stats.samples[0].contains("args.rules[0]"));
+    }
+
+    #[test]
+    fn planning_reserves_only_rules_not_disabled_by_badfilter() {
+        let cfg = AdGuardRuleConfig {
+            rules: vec![
+                "disabled.example".to_string(),
+                "disabled.example$badfilter".to_string(),
+                "/disabled/$".to_string(),
+                "/disabled/$badfilter".to_string(),
+                "active.example".to_string(),
+            ],
+            files: Vec::new(),
+        };
+        let source = TextSource::new("args.rules", &cfg.rules, &cfg.files);
+        let classifier = LineClassifier::new(&["!", "#"]);
+        let mut session = source.open_replay().unwrap();
+
+        let (badfilter_keys, capacities) = plan_build("agh", &mut session, &classifier).unwrap();
+
+        assert_eq!(badfilter_keys.len(), 2);
+        assert_eq!(capacities.blocks.full, 1);
+        assert_eq!(capacities.blocks.regexp, 0);
+        assert_eq!(capacities.blocks.conditional, 0);
     }
 }
