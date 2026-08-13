@@ -723,7 +723,7 @@ export const zhCNPluginDefined = {
         args: {
           label: "可信来源 IP / CIDR",
           description:
-            "仅当原始客户端 IP 命中该列表时，才采用请求中的 ECS 地址。",
+            "仅当原始客户端 IP 命中该列表时，才采用请求中的 ECS 地址；留空默认允许 127.0.0.1 和 ::1。",
           placeholder: "127.0.0.1\n10.0.0.0/24\n::1",
         },
         "args[]": {

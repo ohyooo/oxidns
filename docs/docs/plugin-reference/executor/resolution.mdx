@@ -850,10 +850,10 @@ old-static.example.com static.example.net
 
 #### `args`
 
-- 类型：`array[string]`；必填：是；默认值：无
+- 类型：`array[string]`；必填：否；默认值：`[127.0.0.1, ::1]`
 - 作用：允许提交 ECS 的原始客户端 IP 或 CIDR 白名单。
 - 支持 IPv4、IPv6、单个 IP 和 CIDR；暂不支持 `lan`。
-- 未配置、空数组或包含非法规则时，插件初始化失败。
+- 未配置或空数组时只信任 IPv4/IPv6 loopback；包含非法规则时插件初始化失败。
 
 ### 行为说明
 

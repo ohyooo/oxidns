@@ -83,7 +83,8 @@ describe("client_ip_from_ecs plugin definition", () => {
     expect(definition?.configSchema[0]).toMatchObject({
       key: "args",
       type: "array",
-      required: true,
+      required: false,
+      default: ["127.0.0.1", "::1"],
       itemOptions: [
         {
           optionKey: "input",

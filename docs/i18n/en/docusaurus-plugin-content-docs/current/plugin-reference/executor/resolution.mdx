@@ -805,10 +805,11 @@ It can also be used through sequence quick setup:
 
 #### `args`
 
-- Type: `array[string]`; Required: yes; Default: none
+- Type: `array[string]`; Required: no; Default: `[127.0.0.1, ::1]`
 - Purpose: Allow-list original client IPs or CIDRs that may submit ECS.
 - Supports IPv4, IPv6, individual IPs, and CIDRs; `lan` is not supported yet.
-- Missing, empty, or invalid rules cause plugin initialization to fail.
+- Missing or empty args trust only IPv4/IPv6 loopback; invalid rules cause
+  plugin initialization to fail.
 
 ### Behavior
 

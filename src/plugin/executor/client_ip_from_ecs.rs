@@ -24,6 +24,8 @@ use crate::plugin::{Plugin, PluginFactory, UninitializedPlugin};
 use crate::plugin_factory;
 use crate::proto::{EdnsCode, EdnsOption};
 
+const DEFAULT_TRUSTED_SOURCES: [&str; 2] = ["127.0.0.1", "::1"];
+
 #[derive(Debug)]
 struct ClientIpFromEcs {
     tag: String,
@@ -112,9 +114,7 @@ impl PluginFactory for ClientIpFromEcsFactory {
 
 fn parse_trusted_sources(args: Option<serde_yaml_ng::Value>) -> Result<Vec<String>> {
     let Some(args) = args else {
-        return Err(DnsError::plugin(
-            "client_ip_from_ecs requires at least one trusted source IP or CIDR in args",
-        ));
+        return Ok(default_trusted_sources());
     };
 
     serde_yaml_ng::from_value(args).map_err(|error| {
@@ -126,6 +126,11 @@ fn parse_trusted_sources(args: Option<serde_yaml_ng::Value>) -> Result<Vec<Strin
 }
 
 fn build_trusted_sources(rules: Vec<String>) -> Result<IpPrefixMatcher> {
+    let rules = if rules.iter().all(|rule| rule.trim().is_empty()) {
+        default_trusted_sources()
+    } else {
+        rules
+    };
     let mut matcher = IpPrefixMatcher::default();
     for raw_rule in rules {
         let rule = raw_rule.trim();
@@ -140,13 +145,15 @@ fn build_trusted_sources(rules: Vec<String>) -> Result<IpPrefixMatcher> {
         })?;
     }
 
-    if !matcher.has_v4_rules() && !matcher.has_v6_rules() {
-        return Err(DnsError::plugin(
-            "client_ip_from_ecs requires at least one trusted source IP or CIDR in args",
-        ));
-    }
     matcher.finalize_compact();
     Ok(matcher)
+}
+
+fn default_trusted_sources() -> Vec<String> {
+    DEFAULT_TRUSTED_SOURCES
+        .iter()
+        .map(|source| (*source).to_string())
+        .collect()
 }
 
 #[cfg(test)]
@@ -256,8 +263,18 @@ mod tests {
 
     #[test]
     fn validates_trusted_source_args() {
-        assert!(build_trusted_sources(Vec::new()).is_err());
+        let defaults = build_trusted_sources(Vec::new()).unwrap();
+        assert!(defaults.contains_ip(IpAddr::V4(Ipv4Addr::LOCALHOST)));
+        assert!(defaults.contains_ip(IpAddr::V6(Ipv6Addr::LOCALHOST)));
         assert!(build_trusted_sources(vec!["lan".to_string()]).is_err());
         assert!(build_trusted_sources(vec!["10.0.0.0/24".to_string()]).is_ok());
+    }
+
+    #[test]
+    fn missing_args_use_loopback_defaults() {
+        assert_eq!(
+            parse_trusted_sources(None).unwrap(),
+            vec!["127.0.0.1".to_string(), "::1".to_string()]
+        );
     }
 }
