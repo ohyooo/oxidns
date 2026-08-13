@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: 2025 Sven Shi
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use crate::core::rule_matcher::{DomainRuleMatcher, IpPrefixMatcher};
+use crate::core::rule_matcher::{
+    DomainRuleMatcher, IpPrefixMatcher, IpRuleFamily, split_domain_rule_expression,
+};
 use crate::infra::error::{DnsError, Result as DnsResult};
-use crate::infra::io::lines::for_each_nonempty_rule_line;
+use crate::infra::io::{LineClassifier, TextSource};
 
+#[cfg(test)]
 pub(crate) fn parse_ip_prefix_matcher(
     field: &str,
     raw_rules: &[String],
@@ -27,16 +30,20 @@ pub(crate) fn parse_domain_rules_and_set_tags(
     raw_rules: Vec<String>,
     field: &str,
 ) -> DnsResult<(DomainRuleMatcher, Vec<String>)> {
-    let (mut inline_rules, set_tags, files) = split_rule_sources(raw_rules);
-    inline_rules.extend(load_rules_from_files(&files, field)?);
+    let (inline_rules, set_tags, files) = split_rule_sources(raw_rules);
 
     let mut domain_rules = DomainRuleMatcher::default();
-    for (idx, rule) in inline_rules.into_iter().enumerate() {
-        let source = format!("{} rule[{}]", field, idx);
-        domain_rules
-            .add_expression(&rule, &source)
-            .map_err(DnsError::plugin)?;
-    }
+    TextSource::new(field, &inline_rules, &files)
+        .scan(&LineClassifier::new(&["#"]), |line| {
+            if line.annotations().blank || line.annotations().leading_comment.is_some() {
+                return Ok(());
+            }
+            let (kind, value) = split_domain_rule_expression(line.trimmed());
+            domain_rules
+                .add_rule(kind, value, "")
+                .map_err(|error| format!("invalid {field} domain rule: {error}"))
+        })
+        .map_err(|error| DnsError::plugin(error.to_string()))?;
     domain_rules.finalize().map_err(DnsError::plugin)?;
     Ok((domain_rules, set_tags))
 }
@@ -60,9 +67,17 @@ pub(crate) fn parse_ip_rules_and_set_tags(
     raw_rules: Vec<String>,
     field: &str,
 ) -> DnsResult<(IpPrefixMatcher, Vec<String>)> {
-    let (mut inline_rules, set_tags, files) = split_rule_sources(raw_rules);
-    inline_rules.extend(load_rules_from_files(&files, field)?);
-    Ok((parse_ip_prefix_matcher(field, &inline_rules)?, set_tags))
+    let (inline_rules, set_tags, files) = split_rule_sources(raw_rules);
+    let (v4, v6) = count_ip_capacities(&inline_rules, &files, field)?;
+    let mut matcher = IpPrefixMatcher::default();
+    matcher.reserve_rules(v4, v6);
+    scan_ip_rules(field, &inline_rules, &files, |rule| {
+        matcher
+            .add_rule(rule)
+            .map_err(|error| format!("invalid {field} IP rule '{rule}': {error}"))
+    })?;
+    matcher.finalize_compact();
+    Ok((matcher, set_tags))
 }
 
 pub(crate) fn validate_non_empty_ip_rules_or_set_tags(
@@ -107,15 +122,53 @@ pub(crate) fn split_rule_sources(
     (inline_rules, set_tags, files)
 }
 
-fn load_rules_from_files(files: &[String], field: &str) -> DnsResult<Vec<String>> {
-    let mut rules = Vec::new();
-    for path in files {
-        for_each_nonempty_rule_line(path, field, |raw, _| {
-            rules.push(raw.to_string());
-            Ok(())
-        })?;
-    }
-    Ok(rules)
+/// Extract provider references without opening files or compiling rules.
+pub(crate) fn provider_tags_from_rules(raw_rules: &[String]) -> Vec<String> {
+    raw_rules
+        .iter()
+        .filter_map(|raw| raw.trim().strip_prefix('$'))
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn count_ip_capacities(
+    inline: &[String],
+    files: &[String],
+    field: &str,
+) -> DnsResult<(usize, usize)> {
+    let mut v4 = 0usize;
+    let mut v6 = 0usize;
+    scan_ip_rules(field, inline, files, |rule| {
+        match IpPrefixMatcher::classify_rule(rule)
+            .map_err(|error| format!("invalid {field} IP rule '{rule}': {error}"))?
+        {
+            IpRuleFamily::V4 => v4 += 1,
+            IpRuleFamily::V6 => v6 += 1,
+        }
+        Ok(())
+    })?;
+    Ok((v4, v6))
+}
+
+fn scan_ip_rules<F>(
+    field: &str,
+    inline: &[String],
+    files: &[String],
+    mut visitor: F,
+) -> DnsResult<()>
+where
+    F: FnMut(&str) -> Result<(), String>,
+{
+    TextSource::new(field, inline, files)
+        .scan(&LineClassifier::new(&["#"]), |line| {
+            if line.annotations().blank || line.annotations().leading_comment.is_some() {
+                return Ok(());
+            }
+            visitor(line.trimmed())
+        })
+        .map_err(|error| DnsError::plugin(error.to_string()))
 }
 
 #[cfg(test)]
@@ -133,5 +186,14 @@ mod tests {
         assert_eq!(inline, vec!["a.com"]);
         assert_eq!(tags, vec!["set_a"]);
         assert_eq!(files, vec!["/tmp/rules.txt"]);
+    }
+
+    #[test]
+    fn dependency_tags_do_not_touch_file_sources() {
+        let rules = vec![
+            "&/definitely/missing/rules.txt".to_string(),
+            "$set_a".to_string(),
+        ];
+        assert_eq!(provider_tags_from_rules(&rules), vec!["set_a"]);
     }
 }

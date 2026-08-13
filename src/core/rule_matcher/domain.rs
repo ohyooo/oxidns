@@ -160,6 +160,11 @@ pub(crate) struct FullDomainMatcher {
 
 impl FullDomainMatcher {
     #[inline]
+    pub(crate) fn reserve(&mut self, additional: usize) {
+        self.rules.reserve(additional);
+    }
+
+    #[inline]
     pub(crate) fn add_rule(&mut self, rule: &str) {
         self.rules.insert(rule.to_owned().into_boxed_str());
     }
@@ -221,6 +226,11 @@ pub(crate) struct KeywordDomainMatcher {
 
 impl KeywordDomainMatcher {
     #[inline]
+    pub(crate) fn reserve(&mut self, additional: usize) {
+        self.pending_patterns.reserve(additional);
+    }
+
+    #[inline]
     pub(crate) fn add_rule(&mut self, rule: &str) {
         self.pending_patterns.push(rule.to_owned());
         self.rule_count += 1;
@@ -270,6 +280,11 @@ pub(crate) struct RegexpDomainMatcher {
 }
 
 impl RegexpDomainMatcher {
+    #[inline]
+    pub(crate) fn reserve(&mut self, additional: usize) {
+        self.pending_patterns.reserve(additional);
+    }
+
     pub(crate) fn add_rule(&mut self, raw_rule: &str) -> Result<(), String> {
         RegexBuilder::new(raw_rule)
             .case_insensitive(true)
@@ -320,6 +335,25 @@ pub struct DomainRuleMatcher {
 }
 
 impl DomainRuleMatcher {
+    /// Reserve storage for each rule family before bulk loading.
+    pub(crate) fn reserve_rules(&mut self, full: usize, keyword: usize, regexp: usize) {
+        if full > 0 {
+            self.full
+                .get_or_insert_with(FullDomainMatcher::default)
+                .reserve(full);
+        }
+        if keyword > 0 {
+            self.keyword
+                .get_or_insert_with(KeywordDomainMatcher::default)
+                .reserve(keyword);
+        }
+        if regexp > 0 {
+            self.regexp
+                .get_or_insert_with(RegexpDomainMatcher::default)
+                .reserve(regexp);
+        }
+    }
+
     #[inline]
     pub fn has_rules(&self) -> bool {
         self.full.as_ref().is_some_and(|m| m.rule_count() > 0)
@@ -370,6 +404,19 @@ impl DomainRuleMatcher {
         }
 
         let (kind, value) = split_domain_rule_expression(exp);
+        self.add_rule(kind, value, source)
+    }
+
+    /// Insert a rule whose family has already been classified by the caller.
+    ///
+    /// This is crate-visible for streaming providers that should not allocate a
+    /// temporary prefixed expression merely to have it split again here.
+    pub(crate) fn add_rule(
+        &mut self,
+        kind: DomainRuleKind,
+        value: &str,
+        source: &str,
+    ) -> Result<(), String> {
         match kind {
             DomainRuleKind::Regexp => {
                 let value = value.trim();
@@ -379,7 +426,13 @@ impl DomainRuleMatcher {
                 self.regexp
                     .get_or_insert_with(RegexpDomainMatcher::default)
                     .add_rule(value)
-                    .map_err(|e| format!("{} in {}", e, source))?;
+                    .map_err(|e| {
+                        if source.is_empty() {
+                            e
+                        } else {
+                            format!("{} in {}", e, source)
+                        }
+                    })?;
             }
             DomainRuleKind::Full | DomainRuleKind::Domain | DomainRuleKind::Keyword => {
                 let normalized = normalize_domain_cow(value.trim());
@@ -512,6 +565,36 @@ mod tests {
         let matched = matcher.is_match_name(&name);
 
         assert!(matched);
+    }
+
+    #[test]
+    fn suffix_rules_preserve_label_boundaries_and_deduplicate() {
+        let mut matcher = DomainRuleMatcher::default();
+        matcher
+            .add_rule(DomainRuleKind::Domain, "example.com", "test")
+            .unwrap();
+        matcher
+            .add_rule(DomainRuleKind::Domain, "EXAMPLE.COM.", "test")
+            .unwrap();
+
+        assert_eq!(matcher.trie_rule_count(), 1);
+        assert!(matcher.is_match_name(&Name::from_ascii("example.com").unwrap()));
+        assert!(matcher.is_match_name(&Name::from_ascii("www.example.com").unwrap()));
+        assert!(!matcher.is_match_name(&Name::from_ascii("notexample.com").unwrap()));
+        assert!(!matcher.is_match_name(&Name::from_ascii("example.net").unwrap()));
+    }
+
+    #[test]
+    fn suffix_rules_match_parent_domains_at_any_depth() {
+        let mut matcher = DomainRuleMatcher::default();
+        matcher
+            .add_expression("domain:example.com", "test")
+            .unwrap();
+        matcher.add_expression("domain:internal", "test").unwrap();
+
+        assert!(matcher.is_match_name(&Name::from_ascii("a.b.example.com").unwrap()));
+        assert!(matcher.is_match_name(&Name::from_ascii("host.internal").unwrap()));
+        assert!(!matcher.is_match_name(&Name::root()));
     }
 
     #[test]

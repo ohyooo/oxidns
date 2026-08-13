@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: 2025 Sven Shi
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use std::fs::File;
+use std::io::{BufReader, Read, Seek};
+use std::path::Path;
+
 use prost::Message;
 
 use super::model::{Cidr, Domain, DomainType, GeoIp, GeoIpList, GeoSite, GeoSiteList, attribute};
@@ -100,6 +104,143 @@ pub(crate) fn parse_geoip_dat(data: &[u8]) -> Result<GeoIpList, String> {
         .ok_or_else(|| "decoded geoip payload failed structural validation".to_string())
 }
 
+pub(crate) fn visit_geosite_file<F>(path: &Path, on_entry: F) -> Result<(), String>
+where
+    F: FnMut(GeoSite) -> Result<(), String>,
+{
+    visit_top_level_entries::<GeoSite, _>(path, on_entry)
+}
+
+pub(crate) fn visit_geoip_file<F>(path: &Path, on_entry: F) -> Result<(), String>
+where
+    F: FnMut(GeoIp) -> Result<(), String>,
+{
+    visit_top_level_entries::<GeoIp, _>(path, on_entry)
+}
+
+fn visit_top_level_entries<M, F>(path: &Path, mut on_entry: F) -> Result<(), String>
+where
+    M: Message + Default,
+    F: FnMut(M) -> Result<(), String>,
+{
+    let file = File::open(path)
+        .map_err(|error| format!("failed to open '{}': {error}", path.display()))?;
+    let file_len = file
+        .metadata()
+        .map_err(|error| format!("failed to inspect '{}': {error}", path.display()))?
+        .len();
+    let mut reader = BufReader::with_capacity(256 * 1024, file);
+    let mut payload = Vec::new();
+    while let Some(key) = read_varint(&mut reader, true)? {
+        if key == 0 {
+            return Err("protobuf field key must not be zero".to_string());
+        }
+        let field = key >> 3;
+        let wire = (key & 7) as u8;
+        if field == 1 {
+            if wire != 2 {
+                return Err(format!(
+                    "protobuf entry field has unexpected wire type {wire}"
+                ));
+            }
+            let encoded_len = read_required_varint(&mut reader)?;
+            let position = reader
+                .stream_position()
+                .map_err(|error| format!("failed to locate protobuf entry: {error}"))?;
+            if encoded_len > file_len.saturating_sub(position) {
+                return Err(format!(
+                    "truncated protobuf entry payload: declared {encoded_len} bytes, only {} remain",
+                    file_len.saturating_sub(position)
+                ));
+            }
+            let len = usize::try_from(encoded_len)
+                .map_err(|_| "protobuf entry length exceeds platform limits".to_string())?;
+            payload.resize(len, 0);
+            reader
+                .read_exact(&mut payload)
+                .map_err(|error| format!("truncated protobuf entry payload: {error}"))?;
+            let entry = M::decode(payload.as_slice())
+                .map_err(|error| format!("failed to decode protobuf entry: {error}"))?;
+            on_entry(entry)?;
+        } else {
+            skip_field(&mut reader, wire, field)?;
+        }
+    }
+    Ok(())
+}
+
+fn read_required_varint(reader: &mut impl Read) -> Result<u64, String> {
+    read_varint(reader, false)?.ok_or_else(|| "truncated protobuf varint".to_string())
+}
+
+fn read_varint(reader: &mut impl Read, allow_clean_eof: bool) -> Result<Option<u64>, String> {
+    let mut value = 0u64;
+    for shift in (0..70).step_by(7) {
+        let mut byte = [0u8; 1];
+        match reader.read_exact(&mut byte) {
+            Ok(()) => {}
+            Err(error)
+                if allow_clean_eof
+                    && shift == 0
+                    && error.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                return Ok(None);
+            }
+            Err(error) => return Err(format!("truncated protobuf varint: {error}")),
+        }
+        if shift == 63 && byte[0] > 1 {
+            return Err("protobuf varint overflows u64".to_string());
+        }
+        value |= u64::from(byte[0] & 0x7F) << shift;
+        if byte[0] & 0x80 == 0 {
+            return Ok(Some(value));
+        }
+    }
+    Err("protobuf varint is too long".to_string())
+}
+
+fn skip_field(reader: &mut impl Read, wire: u8, field: u64) -> Result<(), String> {
+    match wire {
+        0 => {
+            read_required_varint(reader)?;
+            Ok(())
+        }
+        1 => skip_bytes(reader, 8),
+        2 => {
+            let len = usize::try_from(read_required_varint(reader)?)
+                .map_err(|_| "protobuf field length exceeds platform limits".to_string())?;
+            skip_bytes(reader, len)
+        }
+        3 => loop {
+            let key = read_required_varint(reader)?;
+            let nested_field = key >> 3;
+            let nested_wire = (key & 7) as u8;
+            if nested_wire == 4 {
+                if nested_field != field {
+                    return Err("mismatched protobuf end-group field".to_string());
+                }
+                return Ok(());
+            }
+            skip_field(reader, nested_wire, nested_field)?;
+        },
+        4 => Err("unexpected protobuf end-group field".to_string()),
+        5 => skip_bytes(reader, 4),
+        _ => Err(format!("invalid protobuf wire type {wire}")),
+    }
+}
+
+fn skip_bytes(reader: &mut impl Read, mut len: usize) -> Result<(), String> {
+    let mut scratch = [0u8; 8192];
+    while len > 0 {
+        let chunk = len.min(scratch.len());
+        reader
+            .read_exact(&mut scratch[..chunk])
+            .map_err(|error| format!("truncated protobuf field: {error}"))?;
+        len -= chunk;
+    }
+    Ok(())
+}
+
 pub(crate) fn detect_dat_kind(data: &[u8]) -> Result<ParsedDat, String> {
     let geosite = parse_geosite_dat(data).ok().map(ParsedDat::GeoSite);
     let geoip = parse_geoip_dat(data).ok().map(ParsedDat::GeoIp);
@@ -143,4 +284,71 @@ fn is_valid_geoip_list(list: &GeoIpList) -> bool {
                     .iter()
                     .all(|cidr| matches!(cidr.ip.len(), 4 | 16))
         })
+}
+
+#[cfg(test)]
+mod streaming_tests {
+    use std::io::Write;
+
+    use tempfile::NamedTempFile;
+
+    use super::*;
+
+    #[test]
+    fn streams_entries_and_skips_unknown_top_level_fields() {
+        let list = GeoSiteList {
+            entry: vec![
+                GeoSite {
+                    country_code: "CN".to_string(),
+                    domain: vec![Domain {
+                        r#type: DomainType::RootDomain as i32,
+                        value: "example.cn".to_string(),
+                        attribute: Vec::new(),
+                    }],
+                    resource_hash: Vec::new(),
+                    code: String::new(),
+                    file_path: String::new(),
+                },
+                GeoSite {
+                    country_code: "US".to_string(),
+                    domain: vec![Domain {
+                        r#type: DomainType::Full as i32,
+                        value: "example.com".to_string(),
+                        attribute: Vec::new(),
+                    }],
+                    resource_hash: Vec::new(),
+                    code: String::new(),
+                    file_path: String::new(),
+                },
+            ],
+        };
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(&[0x10, 0x01]).unwrap();
+        file.write_all(&list.encode_to_vec()).unwrap();
+        let mut codes = Vec::new();
+        visit_geosite_file(file.path(), |entry| {
+            codes.push(geosite_code(&entry).to_string());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(codes, vec!["CN", "US"]);
+    }
+
+    #[test]
+    fn rejects_truncated_entry_payload() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(&[0x0A, 0x05, 0x01]).unwrap();
+        let error = visit_geosite_file(file.path(), |_| Ok(())).unwrap_err();
+        assert!(error.contains("truncated protobuf entry payload"));
+    }
+
+    #[test]
+    fn rejects_overflowing_length_varint_without_allocating_payload() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(&[0x0A]).unwrap();
+        file.write_all(&[0xFF; 9]).unwrap();
+        file.write_all(&[0x02]).unwrap();
+        let error = visit_geosite_file(file.path(), |_| Ok(())).unwrap_err();
+        assert!(error.contains("overflows u64"), "{error}");
+    }
 }

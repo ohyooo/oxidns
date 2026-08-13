@@ -349,7 +349,8 @@ plugins:
 ### 行为说明
 
 - 支持：基础域名规则、`@@`、`important`、`badfilter`、`denyallow`、请求侧 `dnstype`
-- 不支持但会 warning 并跳过：`/etc/hosts` 风格规则、`dnsrewrite`、`$client`、`$ctag`、未知 modifier
+- 不支持但会汇总 warning 并跳过：URL/路径过滤规则、`/etc/hosts` 风格规则、页面元素过滤规则、`dnsrewrite`、`$client`、`$ctag`、未知 modifier
+- 初始化与 reload 会流式读取规则文件；跳过日志按原因汇总，并且每类最多记录 5 个规则样例
 - 完整优先级顺序为：
   - `important` 例外
   - `important` 拦截

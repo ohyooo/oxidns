@@ -625,7 +625,7 @@ export const pluginFieldDocs = {
     rules:
       "- 类型：`array`；必填：否；默认值：空数组\n- 作用：提供内联 AdGuard Home DNS 规则子集。\n- 支持内容：基础域名规则、`@@`、`important`、`badfilter`、`denyallow`、请求侧 `dnstype`。",
     files:
-      "- 类型：`array`；必填：否；默认值：空数组\n- 作用：从外部规则文件加载 AdGuard Home DNS 规则子集。\n- 运行影响：文件内容会在初始化或 `reload_provider` 时重新读取。",
+      "- 类型：`array`；必填：否；默认值：空数组\n- 作用：从外部规则文件加载 AdGuard Home DNS 规则子集。\n- 运行影响：文件内容会在初始化或 `reload_provider` 时流式读取。\n- 跳过规则：URL/路径过滤、hosts、页面元素过滤以及不支持的 modifier 会按原因汇总 warning，每类最多保留 5 个样例。",
   },
   ip_set: {
     ips: "- 类型：`array`；必填：否；默认值：空数组\n- 作用：定义内联 IP 或 CIDR 规则列表。\n- 支持内容：\n  - 单个 IPv4 地址\n  - 单个 IPv6 地址\n  - IPv4 CIDR\n  - IPv6 CIDR\n- 运行影响：\n  - 规则会在初始化阶段编译为地址匹配结构。",
