@@ -197,6 +197,8 @@ jobs:
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
 
       - name: Download WebUI artifact
         if: inputs.bundle != 'minimal'
