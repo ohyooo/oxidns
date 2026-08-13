@@ -7,9 +7,11 @@
 //! Client Subnet (ECS) option, such as one added by dnsmasq `--add-subnet`.
 //! `args` is an optional array of trusted original client IPs or CIDR prefixes;
 //! missing or empty args trust only IPv4 and IPv6 loopback. ECS is used only
-//! when the transport peer matches this allow-list. Place the plugin before
-//! client-IP matchers and recorders. It performs no allocation, locking, or I/O
-//! on the request path.
+//! when the transport peer matches this allow-list and the ECS source prefix
+//! identifies a complete host (`/32` for IPv4 or `/128` for IPv6). Place the
+//! plugin before client-IP matchers and recorders. Rejected non-host prefixes
+//! emit a warning; otherwise it performs no allocation, locking, or I/O on the
+//! request path.
 
 use std::net::SocketAddr;
 
@@ -66,9 +68,22 @@ impl Executor for ClientIpFromEcs {
             .as_ref()
             .and_then(|edns| edns.option(EdnsCode::Subnet))
             .and_then(|option| match option {
-                // A zero-length prefix intentionally conveys no client address.
-                EdnsOption::Subnet(subnet) if subnet.source_prefix() != 0 => {
-                    Some(normalize_ipv4_mapped_ip(subnet.addr()))
+                EdnsOption::Subnet(subnet) => {
+                    let addr = subnet.addr();
+                    let source_prefix = subnet.source_prefix();
+                    let expected_prefix = if addr.is_ipv4() { 32 } else { 128 };
+                    if source_prefix == expected_prefix {
+                        Some(normalize_ipv4_mapped_ip(addr))
+                    } else {
+                        tracing::warn!(
+                            plugin = %self.tag,
+                            ecs_addr = %addr,
+                            source_prefix,
+                            expected_prefix,
+                            "ignored ECS client address with non-host source prefix"
+                        );
+                        None
+                    }
                 }
                 _ => None,
             });
@@ -202,7 +217,7 @@ mod tests {
     async fn supports_ipv6_ecs() {
         let mut context = test_context();
         let ecs_ip = Ipv6Addr::new(0x2001, 0xDB8, 1, 2, 0, 0, 0, 0);
-        add_ecs(&mut context, IpAddr::V6(ecs_ip), 64);
+        add_ecs(&mut context, IpAddr::V6(ecs_ip), 128);
 
         plugin(&["127.0.0.1"]).execute(&mut context).await.unwrap();
         assert_eq!(context.peer_addr().ip(), IpAddr::V6(ecs_ip));
@@ -226,6 +241,25 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(zero_prefix.peer_addr(), original);
+    }
+
+    #[tokio::test]
+    async fn ignores_ecs_with_non_host_prefix() {
+        for (addr, prefix) in [
+            (IpAddr::V4(Ipv4Addr::new(192, 0, 2, 0)), 24),
+            (
+                IpAddr::V6(Ipv6Addr::new(0x2001, 0xDB8, 1, 2, 0, 0, 0, 0)),
+                64,
+            ),
+        ] {
+            let mut context = test_context();
+            let original = context.peer_addr();
+            add_ecs(&mut context, addr, prefix);
+
+            plugin(&["127.0.0.1"]).execute(&mut context).await.unwrap();
+
+            assert_eq!(context.peer_addr(), original);
+        }
     }
 
     #[tokio::test]
