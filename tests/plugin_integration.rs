@@ -91,6 +91,8 @@ log:
 plugins:
   - tag: ecs_client
     type: client_ip_from_ecs
+    args:
+      - 127.0.0.1
   - tag: lan_client
     type: client_ip
     args:

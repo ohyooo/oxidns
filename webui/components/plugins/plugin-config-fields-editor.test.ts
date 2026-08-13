@@ -78,7 +78,20 @@ describe("client_ip_from_ecs plugin definition", () => {
     expect(definition).toMatchObject({
       kind: "client_ip_from_ecs",
       type: "executor",
-      configSchema: [],
+    });
+    expect(definition?.configSchema).toHaveLength(1);
+    expect(definition?.configSchema[0]).toMatchObject({
+      key: "args",
+      type: "array",
+      required: true,
+      itemOptions: [
+        {
+          optionKey: "input",
+          type: "text",
+          label: "输入值",
+          placeholder: "127.0.0.1",
+        },
+      ],
     });
     expect(
       getLocalizedPluginKindDefinition("client_ip_from_ecs", "zh-CN")?.name,

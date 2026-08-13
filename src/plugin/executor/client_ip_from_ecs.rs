@@ -5,9 +5,10 @@
 //!
 //! Replaces the request-local client IP with the address carried by an EDNS
 //! Client Subnet (ECS) option, such as one added by dnsmasq `--add-subnet`.
-//! The plugin has no configuration or external dependencies and only mutates
-//! [`DnsContext`]; place it before client-IP matchers and recorders. It
-//! performs no allocation, locking, or I/O on the request path.
+//! `args` is a required array of trusted original client IPs or CIDR prefixes.
+//! ECS is used only when the transport peer matches this allow-list. Place the
+//! plugin before client-IP matchers and recorders. It performs no allocation,
+//! locking, or I/O on the request path.
 
 use std::net::SocketAddr;
 
@@ -15,7 +16,8 @@ use async_trait::async_trait;
 
 use crate::config::types::PluginConfig;
 use crate::core::context::DnsContext;
-use crate::infra::error::Result;
+use crate::core::rule_matcher::IpPrefixMatcher;
+use crate::infra::error::{DnsError, Result};
 use crate::infra::network::ip::normalize_ipv4_mapped_ip;
 use crate::plugin::executor::{ExecStep, Executor};
 use crate::plugin::{Plugin, PluginFactory, UninitializedPlugin};
@@ -25,6 +27,7 @@ use crate::proto::{EdnsCode, EdnsOption};
 #[derive(Debug)]
 struct ClientIpFromEcs {
     tag: String,
+    trusted_sources: IpPrefixMatcher,
 }
 
 #[async_trait]
@@ -46,6 +49,14 @@ impl Plugin for ClientIpFromEcs {
 impl Executor for ClientIpFromEcs {
     #[hotpath::measure]
     async fn execute(&self, context: &mut DnsContext) -> Result<ExecStep> {
+        let original_peer = context.peer_addr();
+        if !self
+            .trusted_sources
+            .contains_ip(normalize_ipv4_mapped_ip(original_peer.ip()))
+        {
+            return Ok(ExecStep::Next);
+        }
+
         let ecs_addr = context
             .request()
             .edns()
@@ -60,8 +71,7 @@ impl Executor for ClientIpFromEcs {
             });
 
         if let Some(ip) = ecs_addr {
-            let port = context.peer_addr().port();
-            context.set_peer_addr(SocketAddr::new(ip, port));
+            context.set_peer_addr(SocketAddr::new(ip, original_peer.port()));
         }
 
         Ok(ExecStep::Next)
@@ -78,16 +88,65 @@ impl PluginFactory for ClientIpFromEcsFactory {
         plugin_config: &PluginConfig,
         _init_context: &crate::plugin::PluginInitContext<'_>,
     ) -> Result<UninitializedPlugin> {
+        let rules = parse_trusted_sources(plugin_config.args.clone())?;
         Ok(UninitializedPlugin::Executor(Box::new(ClientIpFromEcs {
             tag: plugin_config.tag.clone(),
+            trusted_sources: build_trusted_sources(rules)?,
         })))
     }
 
-    fn quick_setup(&self, tag: &str, _param: Option<String>) -> Result<UninitializedPlugin> {
+    fn quick_setup(&self, tag: &str, param: Option<String>) -> Result<UninitializedPlugin> {
+        let rules = param
+            .unwrap_or_default()
+            .split([',', ' ', '\t'])
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+            .collect();
         Ok(UninitializedPlugin::Executor(Box::new(ClientIpFromEcs {
             tag: tag.to_string(),
+            trusted_sources: build_trusted_sources(rules)?,
         })))
     }
+}
+
+fn parse_trusted_sources(args: Option<serde_yaml_ng::Value>) -> Result<Vec<String>> {
+    let Some(args) = args else {
+        return Err(DnsError::plugin(
+            "client_ip_from_ecs requires at least one trusted source IP or CIDR in args",
+        ));
+    };
+
+    serde_yaml_ng::from_value(args).map_err(|error| {
+        DnsError::plugin(format!(
+            "failed to parse client_ip_from_ecs args as an IP/CIDR array: {}",
+            error
+        ))
+    })
+}
+
+fn build_trusted_sources(rules: Vec<String>) -> Result<IpPrefixMatcher> {
+    let mut matcher = IpPrefixMatcher::default();
+    for raw_rule in rules {
+        let rule = raw_rule.trim();
+        if rule.is_empty() {
+            continue;
+        }
+        matcher.add_rule(rule).map_err(|error| {
+            DnsError::plugin(format!(
+                "invalid client_ip_from_ecs trusted source '{}': {}",
+                rule, error
+            ))
+        })?;
+    }
+
+    if !matcher.has_v4_rules() && !matcher.has_v6_rules() {
+        return Err(DnsError::plugin(
+            "client_ip_from_ecs requires at least one trusted source IP or CIDR in args",
+        ));
+    }
+    matcher.finalize_compact();
+    Ok(matcher)
 }
 
 #[cfg(test)]
@@ -105,9 +164,13 @@ mod tests {
             .insert(EdnsOption::Subnet(ClientSubnet::new(addr, prefix, 0)));
     }
 
-    fn plugin() -> ClientIpFromEcs {
+    fn plugin(rules: &[&str]) -> ClientIpFromEcs {
         ClientIpFromEcs {
             tag: "client_ip_from_ecs".to_string(),
+            trusted_sources: build_trusted_sources(
+                rules.iter().map(|rule| (*rule).to_string()).collect(),
+            )
+            .unwrap(),
         }
     }
 
@@ -118,7 +181,7 @@ mod tests {
         add_ecs(&mut context, IpAddr::V4(Ipv4Addr::new(192, 0, 2, 123)), 32);
 
         assert_eq!(
-            plugin().execute(&mut context).await.unwrap(),
+            plugin(&["127.0.0.1"]).execute(&mut context).await.unwrap(),
             ExecStep::Next
         );
         assert_eq!(
@@ -133,7 +196,7 @@ mod tests {
         let ecs_ip = Ipv6Addr::new(0x2001, 0xDB8, 1, 2, 0, 0, 0, 0);
         add_ecs(&mut context, IpAddr::V6(ecs_ip), 64);
 
-        plugin().execute(&mut context).await.unwrap();
+        plugin(&["127.0.0.1"]).execute(&mut context).await.unwrap();
         assert_eq!(context.peer_addr().ip(), IpAddr::V6(ecs_ip));
     }
 
@@ -141,13 +204,60 @@ mod tests {
     async fn leaves_client_ip_unchanged_without_usable_ecs() {
         let mut without_ecs = test_context();
         let original = without_ecs.peer_addr();
-        plugin().execute(&mut without_ecs).await.unwrap();
+        plugin(&["127.0.0.1"])
+            .execute(&mut without_ecs)
+            .await
+            .unwrap();
         assert_eq!(without_ecs.peer_addr(), original);
 
         let mut zero_prefix = test_context();
         let original = zero_prefix.peer_addr();
         add_ecs(&mut zero_prefix, IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
-        plugin().execute(&mut zero_prefix).await.unwrap();
+        plugin(&["127.0.0.1"])
+            .execute(&mut zero_prefix)
+            .await
+            .unwrap();
         assert_eq!(zero_prefix.peer_addr(), original);
+    }
+
+    #[tokio::test]
+    async fn ignores_ecs_from_untrusted_source() {
+        let mut context = test_context();
+        context.set_peer_addr(SocketAddr::from((Ipv4Addr::new(198, 51, 100, 9), 5353)));
+        add_ecs(&mut context, IpAddr::V4(Ipv4Addr::new(192, 0, 2, 123)), 32);
+
+        plugin(&["10.0.0.0/24"])
+            .execute(&mut context)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            context.peer_addr(),
+            SocketAddr::from((Ipv4Addr::new(198, 51, 100, 9), 5353))
+        );
+    }
+
+    #[tokio::test]
+    async fn accepts_ecs_from_trusted_cidr() {
+        let mut context = test_context();
+        context.set_peer_addr(SocketAddr::from((Ipv4Addr::new(10, 0, 0, 42), 5353)));
+        add_ecs(&mut context, IpAddr::V4(Ipv4Addr::new(192, 0, 2, 123)), 32);
+
+        plugin(&["10.0.0.0/24"])
+            .execute(&mut context)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            context.peer_addr(),
+            SocketAddr::from((Ipv4Addr::new(192, 0, 2, 123), 5353))
+        );
+    }
+
+    #[test]
+    fn validates_trusted_source_args() {
+        assert!(build_trusted_sources(Vec::new()).is_err());
+        assert!(build_trusted_sources(vec!["lan".to_string()]).is_err());
+        assert!(build_trusted_sources(vec!["10.0.0.0/24".to_string()]).is_ok());
     }
 }

@@ -779,6 +779,12 @@ Sets the current `DnsContext` client IP from the request's EDNS Client Subnet
 ```yaml
 - tag: ecs_client
   type: client_ip_from_ecs
+  args:
+    # Trust only a local dnsmasq.
+    - 127.0.0.1
+    - ::1
+    # A custom forwarding subnet can also be allowed.
+    - 10.0.0.0/24
 
 - tag: main
   type: sequence
@@ -792,12 +798,23 @@ Sets the current `DnsContext` client IP from the request's EDNS Client Subnet
 It can also be used through sequence quick setup:
 
 ```yaml
-- exec: client_ip_from_ecs
+- exec: "client_ip_from_ecs 127.0.0.1"
 ```
+
+### Configuration Details
+
+#### `args`
+
+- Type: `array[string]`; Required: yes; Default: none
+- Purpose: Allow-list original client IPs or CIDRs that may submit ECS.
+- Supports IPv4, IPv6, individual IPs, and CIDRs; `lan` is not supported yet.
+- Missing, empty, or invalid rules cause plugin initialization to fail.
 
 ### Behavior
 
-- Replaces the client IP when ECS exists and its source prefix is non-zero,
+- Checks `args` against the unmodified transport peer and ignores ECS when the
+  peer is not trusted.
+- Replaces the client IP when the source is trusted, ECS exists, and its source prefix is non-zero,
   while preserving the original connection port.
 - Makes no change when ECS is absent or its source prefix is `0`.
 - Supports IPv4 and IPv6 and normalizes IPv4-mapped IPv6 addresses.
@@ -808,8 +825,8 @@ It can also be used through sequence quick setup:
 
 <Admonition type="warning" title="Trust boundary">
 
-Requesters can forge ECS. Enable this only when OxiDNS accepts queries solely
-from a trusted dnsmasq, and configure dnsmasq with `--strip-subnet` plus
+Requesters can forge ECS. Explicitly list the dnsmasq connection address or
+network in `args`, and configure dnsmasq with `--strip-subnet` plus
 `--add-subnet=32,128` so it replaces downstream ECS. Prefixes shorter than
 `/32` or `/128` carry only a truncated network address and cannot recover the
 complete client IP.

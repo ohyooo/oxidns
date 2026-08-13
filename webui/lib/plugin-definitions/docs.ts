@@ -146,7 +146,9 @@ export const pluginFieldDocs = {
     files:
       "- 类型：`array`；必填：否；默认值：空数组\n- 作用：指定外部重定向规则文件列表。\n- 文件格式与 `rules` 相同，每行一条；空行和 `#` 注释会被忽略。",
   },
-  client_ip_from_ecs: {},
+  client_ip_from_ecs: {
+    args: "- 类型：`array[string]`；必填：是；默认值：无\n- 作用：定义允许提交 ECS 的原始客户端 IP 或 CIDR。\n- 安全：只有原始连接地址命中列表时才会采用 ECS；支持 IPv4、IPv6、单 IP 和 CIDR。",
+  },
   ecs_handler: {
     forward:
       "- 类型：`boolean`；必填：否；默认值：`false`\n- 作用：控制是否保留客户端请求中已有的 ECS。",
