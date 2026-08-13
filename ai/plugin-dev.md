@@ -75,7 +75,7 @@ OxiDNS uses a three-layer Cargo feature system. Every new plugin must be placed 
 | **Private aggregators** | `_tls-base`, `_http-server`, `_http-client`, `_sequence-step-recording` | Shared optional deps — never enable directly |
 
 **Bundle scope:**
-- `minimal` — UDP/TCP listeners and upstreams, `sequence`, `forward`, `cache`, `fallback`, `hosts`, `redirect`, `dual_selector`, `client_ip_from_ecs`, `ecs_handler`, `ttl`, `drop_resp`, `black_hole`, `debug_print`, `reload`, all matchers, `domain_set`, `ip_set`. No hyper/rustls/quinn/h2/h3/zoneparser.
+- `minimal` — UDP/TCP listeners and upstreams, `sequence`, `forward`, `cache`, `fallback`, `hosts`, `redirect`, `dual_selector`, `ecs_handler`, `ttl`, `drop_resp`, `black_hole`, `debug_print`, `reload`, all matchers, `domain_set`, `ip_set`. No hyper/rustls/quinn/h2/h3/zoneparser.
 - `standard` — `minimal` + management API, WebUI, metrics, DoT/DoH/DoQ, most executor and provider plugins. No MikroTik, no ipset/nftset.
 - `full` (default) — `standard` + DoH3, `plugin-mikrotik` (both RouterOS executors), `plugin-ipset`.
 
@@ -83,7 +83,7 @@ OxiDNS uses a three-layer Cargo feature system. Every new plugin must be placed 
 
 These plugins are compiled unconditionally as part of `minimal`. Do **not** add a feature gate to them:
 
-`black_hole`, `cache`, `client_ip_from_ecs`, `debug_print`, `drop_resp`, `dual_selector`, `ecs_handler`, `fallback`, `forward`, `forward_edns0opt`, `hosts`, `query_summary`, `redirect`, `reload`, `sleep`, `sequence`, `ttl` — and all matchers (`qname`, `qtype`, `qclass`, `client_ip`, `resp_ip`, `cname`, `has_resp`, `rcode`, `mark`, `env`, `random`, `rate_limit`, …) and core providers (`domain_set`, `ip_set`).
+`black_hole`, `cache`, `debug_print`, `drop_resp`, `dual_selector`, `ecs_handler`, `fallback`, `forward`, `forward_edns0opt`, `hosts`, `query_summary`, `redirect`, `reload`, `sleep`, `sequence`, `ttl` — and all matchers (`qname`, `qtype`, `qclass`, `client_ip`, `resp_ip`, `cname`, `has_resp`, `rcode`, `mark`, `env`, `random`, `rate_limit`, …) and core providers (`domain_set`, `ip_set`).
 
 ### When to add a feature gate
 

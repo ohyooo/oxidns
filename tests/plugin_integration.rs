@@ -83,6 +83,7 @@ fn make_context_with_qtype(
     DnsContext::new(SocketAddr::from((Ipv4Addr::LOCALHOST, 5300)), request)
 }
 
+#[cfg(feature = "plugin-client-ip-from-ecs")]
 #[tokio::test]
 async fn test_client_ip_from_ecs_updates_client_ip_for_following_matcher() -> Result<()> {
     let yaml = r#"
