@@ -175,8 +175,6 @@ jobs:
 
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
 
       - name: Download WebUI artifact
         uses: actions/download-artifact@v8
@@ -328,8 +326,6 @@ jobs:
 
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}-${{ matrix.bundle }}
 
       - name: Install cross
         run: cargo install cross --git https://github.com/cross-rs/cross
@@ -428,8 +424,6 @@ jobs:
             exit 1
           fi
 
-          python3 -m unittest discover -s .github/scripts -p '*_test.py'
-
       - name: Create release
         uses: softprops/action-gh-release@v3
         with:
@@ -446,6 +440,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TELEGRAM_ANNOUNCEMENTS_THREAD_ID: ${{ secrets.TELEGRAM_ANNOUNCEMENTS_THREAD_ID }}
+          VERSION: ${{ github.ref_name }}
           RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }}
         run: |
           set -euo pipefail
@@ -454,15 +449,23 @@ jobs:
           : "${TELEGRAM_ANNOUNCEMENTS_THREAD_ID:?missing TELEGRAM_ANNOUNCEMENTS_THREAD_ID}"
 
           RELEASE_NOTES_PATH=".github/release-notes.md"
-          MESSAGE=$(python3 .github/scripts/telegram_release_message.py \
-            "$RELEASE_NOTES_PATH" "$RELEASE_URL")
+          RELEASE_NOTES=$(cat "$RELEASE_NOTES_PATH")
+          RELEASE_LINK=$(printf '\n\n👉 GitHub Release：%s' "$RELEASE_URL")
+          MESSAGE="${RELEASE_NOTES}${RELEASE_LINK}"
+          MESSAGE_LENGTH=$(printf '%s' "$MESSAGE" | wc -m)
+          if (( MESSAGE_LENGTH > 4096 )); then
+            TRUNCATION_NOTICE=$'\n\n…（发布说明过长，已裁剪；完整内容请查看 GitHub Release。）'
+            RESERVED_LENGTH=$(printf '%s' "${TRUNCATION_NOTICE}${RELEASE_LINK}" | wc -m)
+            MAX_RELEASE_NOTES_LENGTH=$((4096 - RESERVED_LENGTH))
+            RELEASE_NOTES="${RELEASE_NOTES:0:MAX_RELEASE_NOTES_LENGTH}"
+            MESSAGE="${RELEASE_NOTES}${TRUNCATION_NOTICE}${RELEASE_LINK}"
+          fi
 
           SEND_RESPONSE=$(curl -sS --fail-with-body \
             -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
             --data-urlencode "message_thread_id=${TELEGRAM_ANNOUNCEMENTS_THREAD_ID}" \
             --data-urlencode "text=${MESSAGE}" \
-            --data-urlencode "parse_mode=HTML" \
             --data-urlencode "disable_web_page_preview=false")
           MESSAGE_ID=$(jq -er '.result.message_id' <<<"$SEND_RESPONSE")
 
