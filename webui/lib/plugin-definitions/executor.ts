@@ -673,18 +673,15 @@ export const executorPluginDefinitions: PluginKindDefinition[] = [
     description: "使用 EDNS Client Subnet 地址覆盖当前请求的客户端 IP",
     icon: "Network",
     configSchema: [
-      {
-        ...stringArrayField(
-          "args",
-          "可信来源 IP / CIDR",
-          "127.0.0.1\n10.0.0.0/24\n::1",
-          false,
-          "仅当原始客户端 IP 命中该列表时，才采用请求中的 ECS 地址。",
-          undefined,
-          [inputArrayItem("127.0.0.1")],
-        ),
-        default: ["127.0.0.1", "::1"],
-      },
+      stringArrayField(
+        "args",
+        "可信来源 IP / CIDR",
+        "127.0.0.1\n10.0.0.0/24\n::1",
+        false,
+        "仅当原始客户端 IP 命中该列表时，才采用请求中的 ECS 地址；留空时由服务端默认允许 127.0.0.1 和 ::1。",
+        undefined,
+        [inputArrayItem("127.0.0.1")],
+      ),
     ],
     quickSetup: {
       paramPlaceholder: "127.0.0.1 或 10.0.0.0/24",

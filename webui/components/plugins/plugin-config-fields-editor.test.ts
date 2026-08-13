@@ -84,7 +84,6 @@ describe("client_ip_from_ecs plugin definition", () => {
       key: "args",
       type: "array",
       required: false,
-      default: ["127.0.0.1", "::1"],
       itemOptions: [
         {
           optionKey: "input",
@@ -94,6 +93,14 @@ describe("client_ip_from_ecs plugin definition", () => {
         },
       ],
     });
+    expect(definition?.configSchema[0]?.default).toBeUndefined();
+    const values = createDefaultPluginConfigValues(
+      definition?.configSchema ?? [],
+    );
+    expect(values).toEqual({ args: [] });
+    expect(
+      serializePluginConfigValues(definition?.configSchema ?? [], values),
+    ).toEqual({});
     expect(
       getLocalizedPluginKindDefinition("client_ip_from_ecs", "zh-CN")?.name,
     ).toBe("从 ECS 获取客户端 IP");
