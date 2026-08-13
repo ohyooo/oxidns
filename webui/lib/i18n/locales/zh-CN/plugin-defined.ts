@@ -715,6 +715,26 @@ export const zhCNPluginDefined = {
         },
       },
     },
+    client_ip_from_ecs: {
+      name: "从 ECS 获取客户端 IP",
+      description:
+        "使用 EDNS Client Subnet 地址覆盖当前请求的客户端 IP，供后续匹配器和记录器使用",
+      fields: {
+        args: {
+          label: "可信来源 IP / CIDR",
+          description:
+            "仅当原始客户端 IP 命中该列表时，才采用请求中的 ECS 地址；留空默认允许 127.0.0.1 和 ::1。",
+          placeholder: "127.0.0.1\n10.0.0.0/24\n::1",
+        },
+        "args.$input": {
+          label: "IP 或 CIDR",
+          placeholder: "127.0.0.1",
+        },
+      },
+      quickSetup: {
+        paramPlaceholder: "127.0.0.1 或 10.0.0.0/24",
+      },
+    },
     ecs_handler: {
       name: "ECS Handler",
       description: "处理 EDNS Client Subnet 的保留、注入和回程清理",

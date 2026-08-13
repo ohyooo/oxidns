@@ -73,6 +73,47 @@ if (!forwardDefinition || !fallbackDefinition) {
   throw new Error("forward and fallback executor definitions must exist");
 }
 
+describe("client_ip_from_ecs plugin definition", () => {
+  it("is registered and localized for both WebUI locales", () => {
+    const definition = executorPluginDefinitions.find(
+      (candidate) => candidate.kind === "client_ip_from_ecs",
+    );
+
+    expect(definition).toMatchObject({
+      kind: "client_ip_from_ecs",
+      type: "executor",
+    });
+    expect(definition?.configSchema).toHaveLength(1);
+    expect(definition?.configSchema[0]).toMatchObject({
+      key: "args",
+      type: "array",
+      required: false,
+      itemOptions: [
+        {
+          optionKey: "input",
+          type: "text",
+          label: "输入值",
+          placeholder: "127.0.0.1",
+        },
+      ],
+    });
+    expect(definition?.configSchema[0]?.default).toBeUndefined();
+    const values = createDefaultPluginConfigValues(
+      definition?.configSchema ?? [],
+    );
+    expect(values).toEqual({ args: [] });
+    expect(
+      serializePluginConfigValues(definition?.configSchema ?? [], values),
+    ).toEqual({});
+    expect(
+      getLocalizedPluginKindDefinition("client_ip_from_ecs", "zh-CN")?.name,
+    ).toBe("从 ECS 获取客户端 IP");
+    expect(
+      getLocalizedPluginKindDefinition("client_ip_from_ecs", "en-US")?.name,
+    ).toBe("Client IP From ECS");
+  });
+});
+
 if (preferDefinitions.length !== 2) {
   throw new Error("both dual selector executor definitions must exist");
 }

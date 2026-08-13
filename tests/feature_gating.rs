@@ -255,6 +255,21 @@ plugins:
     );
 }
 
+#[cfg(not(feature = "plugin-client-ip-from-ecs"))]
+#[tokio::test]
+async fn client_ip_from_ecs_type_not_compiled_is_unknown_plugin() {
+    let yaml = r#"
+plugins:
+  - tag: ecs_client
+    type: client_ip_from_ecs
+"#;
+    let err = start_error(yaml).await;
+    assert!(
+        err.contains("Unknown plugin type"),
+        "expected an unknown-plugin-type error, got: {err}"
+    );
+}
+
 #[cfg(not(feature = "plugin-response"))]
 #[tokio::test]
 async fn response_type_not_compiled_is_unknown_plugin() {
@@ -302,6 +317,26 @@ plugins:
     type: sequence
     args:
       - exec: "$arbitrary_main"
+  - tag: udp_main
+    type: udp_server
+    args:
+      entry: entry
+      listen: "127.0.0.1:0"
+"#;
+    start_ok(yaml).await;
+}
+
+#[cfg(feature = "plugin-client-ip-from-ecs")]
+#[tokio::test]
+async fn client_ip_from_ecs_builds_when_compiled() {
+    let yaml = r#"
+plugins:
+  - tag: ecs_client
+    type: client_ip_from_ecs
+  - tag: entry
+    type: sequence
+    args:
+      - exec: "$ecs_client"
   - tag: udp_main
     type: udp_server
     args:

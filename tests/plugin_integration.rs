@@ -83,6 +83,54 @@ fn make_context_with_qtype(
     DnsContext::new(SocketAddr::from((Ipv4Addr::LOCALHOST, 5300)), request)
 }
 
+#[cfg(feature = "plugin-client-ip-from-ecs")]
+#[tokio::test]
+async fn test_client_ip_from_ecs_updates_client_ip_for_following_matcher() -> Result<()> {
+    let yaml = r#"
+log:
+  level: info
+plugins:
+  - tag: ecs_client
+    type: client_ip_from_ecs
+  - tag: lan_client
+    type: client_ip
+    args:
+      - "192.0.2.0/24"
+  - tag: main
+    type: sequence
+    args:
+      - exec: $ecs_client
+      - matches: $lan_client
+        exec: mark 7
+"#;
+
+    let config = parse_config(yaml)?;
+    let registry = plugin::init(config).await?;
+    let sequence = registry
+        .get_plugin("main")
+        .expect("main sequence should exist")
+        .to_executor();
+    let mut context = make_context(registry.clone(), "example.com.");
+    context
+        .request_mut()
+        .ensure_edns_mut()
+        .insert(oxidns::proto::EdnsOption::Subnet(
+            oxidns::proto::ClientSubnet::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 42)), 32, 0),
+        ));
+
+    let step = sequence.execute(&mut context).await?;
+
+    assert_eq!(step, ExecStep::Next);
+    assert_eq!(
+        context.peer_addr(),
+        SocketAddr::from((Ipv4Addr::new(192, 0, 2, 42), 5300))
+    );
+    assert!(context.marks().contains(&7));
+
+    registry.destroy().await;
+    Ok(())
+}
+
 fn test_rule_path(relative_name: &str) -> String {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")

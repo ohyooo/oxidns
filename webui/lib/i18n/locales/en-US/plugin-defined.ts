@@ -793,6 +793,26 @@ export const enUSPluginDefined = {
         },
       },
     },
+    client_ip_from_ecs: {
+      name: "Client IP From ECS",
+      description:
+        "Use the EDNS Client Subnet address as the request-local client IP for subsequent matchers and recorders",
+      fields: {
+        args: {
+          label: "Trusted source IPs / CIDRs",
+          description:
+            "Use ECS only when the original client IP matches this allow-list; empty args default to 127.0.0.1 and ::1.",
+          placeholder: "127.0.0.1\n10.0.0.0/24\n::1",
+        },
+        "args.$input": {
+          label: "IP or CIDR",
+          placeholder: "127.0.0.1",
+        },
+      },
+      quickSetup: {
+        paramPlaceholder: "127.0.0.1 or 10.0.0.0/24",
+      },
+    },
     ecs_handler: {
       name: "ECS Handler",
       description:

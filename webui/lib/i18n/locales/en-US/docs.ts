@@ -166,6 +166,9 @@ export const enUSDocs = {
     files:
       "- Type: `array`; Required: No; Default: empty array\n- Function: Specify the external redirection rule file list.\n- The file format is the same as `rules`, one per line; blank lines and `#` comments are ignored.",
   },
+  client_ip_from_ecs: {
+    args: "- Type: `array[string]`; required: no; runtime default when empty: `[127.0.0.1, ::1]`\n- Function: Define original client IPs or CIDRs allowed to submit ECS.\n- Security: ECS is used only when the original connection address matches this list; IPv4, IPv6, individual IPs, and CIDRs are supported.",
+  },
   ecs_handler: {
     forward:
       "- Type: `boolean`; required: no; default value: `false`\n- Function: Control whether to retain the existing ECS in the client request.",

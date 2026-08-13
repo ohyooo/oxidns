@@ -161,8 +161,8 @@ default = ["full"]
 
 # Minimal core DNS forwarder: UDP + TCP listeners, UDP + TCP upstream,
 # sequence / forward / cache / fallback / hosts / redirect / dual_selector /
-# ecs_handler / ttl / drop_resp / black_hole / debug_print / reload, all
-# matchers, and the `domain_set` + `ip_set` providers.
+# ecs_handler / ttl / drop_resp / black_hole / debug_print / reload, all matchers,
+# and the `domain_set` + `ip_set` providers.
 # Nothing else is compiled. No hyper / rustls / quinn / h2 / h3 / zoneparser.
 minimal = []
 
@@ -184,6 +184,7 @@ standard = [
     "upstream-doq",
     "provider-protobuf",
     "provider-adguard-rule",
+    "plugin-client-ip-from-ecs",
     "plugin-arbitrary",
     "plugin-response",
     "plugin-cron",
@@ -295,6 +296,9 @@ plugin-ip-selector = []
 
 # `script` executor (run an external command per request).
 plugin-script = []
+
+# `client_ip_from_ecs` executor (replace the request-local client IP from ECS).
+plugin-client-ip-from-ecs = []
 
 # `arbitrary` executor (zone-style static DNS records).
 plugin-arbitrary = ["dep:zoneparser"]
