@@ -24,6 +24,11 @@
 //!   extension points.
 //! - [`proto`]: owned DNS protocol model and wire codec.
 
+// `async_trait` marks its generated boxed futures as `must_use`. Newer nightly
+// Clippy versions otherwise report those generated attributes as redundant on
+// every async trait method, with the diagnostic pointing at the macro call.
+#![allow(clippy::double_must_use)]
+
 #[cfg(feature = "api")]
 pub mod api;
 #[path = "api/macros.rs"]

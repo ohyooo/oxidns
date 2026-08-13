@@ -217,9 +217,17 @@ Biases dual-stack results toward one address family.
 ### Example Configuration
 
 ```yaml
+- tag: probe_v4
+  type: forward
+  args:
+    upstreams:
+      - addr: "udp://1.1.1.1:53"
+
 - tag: prefer_v4
   type: prefer_ipv4
   args:
+    # Optional: execute only for the internal preferred-QTYPE probe
+    probe_executor: probe_v4
     # Cache whether the preferred family exists
     cache: true
     # Keep the preference cache for one hour
@@ -227,6 +235,14 @@ Biases dual-stack results toward one address family.
 ```
 
 ### Configuration Details
+
+#### `probe_executor`
+
+- Type: `string`; Required: no; Default: unset
+- Purpose: Specifies the executor tag used only for the internal preferred-QTYPE probe. Use a plain tag without `$`.
+- May reference `forward`, `sequence`, or another executor that can independently produce a DNS response.
+- Inline quick setup is not supported. The dependency graph rejects missing or non-executor references, self-references, and indirect cycles at startup.
+- When omitted, the existing continuation probe mode is preserved, so existing configurations need no changes.
 
 #### `cache`
 
@@ -248,8 +264,8 @@ Biases dual-stack results toward one address family.
 
 <Admonition type="note" title="Notes">
 
-- Quick setup uses the default configuration: `cache: true` and `cache_ttl: 3600`.
-- Use the full plugin configuration when disabling the cache or changing its TTL.
+- Quick setup uses compatibility mode and the defaults: no `probe_executor`, `cache: true`, and `cache_ttl: 3600`.
+- Use the full plugin configuration to select a dedicated probe executor, disable the cache, or change its TTL.
 
 </Admonition>
 
@@ -257,7 +273,19 @@ Biases dual-stack results toward one address family.
 
 - Helps make A and AAAA selection more stable when both families exist.
 - Preferred-family queries pass through normally and warm the preference cache when they return preferred-family answers.
-- Non-preferred-family queries are blocked immediately when the cache says the preferred family exists; otherwise `prefer_ipv4` / `prefer_ipv6` runs the downstream chain concurrently for the original query and a preferred-family probe.
+- Non-preferred-family queries are blocked immediately when the cache says the preferred family exists. On a cache miss, the original query continues through the outer downstream chain.
+- With `probe_executor`, the preferred-family probe runs only the selected executor. Without it, compatibility mode runs the outer downstream chain for the probe as well.
+- A preferred-family answer suppresses the original family. A non-truncated `NOERROR` without that answer or `NXDOMAIN` is a definitive miss and uses the original result. No response, execution error, timeout, truncation, or another failure RCODE is unknown, uses the original result, and does not write a negative cache entry.
+
+### Subquery and Context Isolation
+
+- The preferred-family query is an internal availability probe, not a replacement response for the client request. When the probe succeeds, the outer context keeps the original QTYPE and generates a `NOERROR/NODATA` response for that request.
+- On a cache miss, the original query and preferred-family probe use isolated `DnsContext` instances. The probe inherits ingress data and marks present before entering the selector, but its request, response, later marks, runtime extensions, execution path, and `ExecStep` are not merged into the outer context. After suppression, outer marks therefore remain as they were when the selector was entered.
+- If the preferred probe has no answer, fails, or times out and the original result is used, the complete original subquery result, including its marks, becomes the outer result.
+- This isolation keeps a live probe hit consistent with a direct cache hit: neither exposes preferred-probe state to outer post-processing plugins, and marks must not be used to infer internal probe outcomes.
+- Compatibility mode without `probe_executor` may execute the chain after the selector twice. Do not place executors with logging, counting, learning, scripts, webhooks, or other non-idempotent side effects in that probe path unless duplicate execution is explicitly acceptable.
+- Keep a dedicated probe executor free of side effects where possible. Cancellation can prevent pending work, but it cannot roll back external operations that already completed.
+- The selector cache is still keyed only by domain name. Disable `cache` when a probe sequence depends on the client, marks, randomness, rate limits, or other request-scoped state.
 
 ### Typical Uses
 
@@ -267,6 +295,7 @@ Biases dual-stack results toward one address family.
 <Admonition type="note" title="Notes">
 
 - Preference is not a substitute for fixing broken transport paths.
+- Prefer a dedicated `forward` or `sequence` through `probe_executor` so the probe does not repeat the outer downstream chain. Omitting it retains continuation compatibility.
 
 </Admonition>
 

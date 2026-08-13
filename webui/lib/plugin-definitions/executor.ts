@@ -958,6 +958,15 @@ export const executorPluginDefinitions: PluginKindDefinition[] = [
     icon: "Shuffle",
     configSchema: [
       {
+        key: "probe_executor",
+        description: "指定仅用于 preferred QTYPE 内部探针的执行器。",
+        label: "探针执行器",
+        type: "reference",
+        referenceTypes: ["executor"],
+        referencePrefix: "",
+        placeholder: "probe_v4",
+      },
+      {
         key: "cache",
         description: "控制是否缓存 preferred 类型存在状态。",
         label: "缓存偏好状态",
@@ -982,6 +991,15 @@ export const executorPluginDefinitions: PluginKindDefinition[] = [
     description: "双栈优选器，偏好 AAAA 记录并抑制可替代的 A 请求",
     icon: "Shuffle",
     configSchema: [
+      {
+        key: "probe_executor",
+        description: "指定仅用于 preferred QTYPE 内部探针的执行器。",
+        label: "探针执行器",
+        type: "reference",
+        referenceTypes: ["executor"],
+        referencePrefix: "",
+        placeholder: "probe_v6",
+      },
       {
         key: "cache",
         description: "控制是否缓存 preferred 类型存在状态。",
@@ -1867,7 +1885,17 @@ export const executorPluginDefinitions: PluginKindDefinition[] = [
           "路由删除期间 RouterOS conntrack 查询失败的总次数。",
         ros_route_pending_observations: "当前等待 manager 处理的合并后观测数。",
         ros_route_managed_entries: "manager 当前保留的路由条目数。",
+        ros_route_coalesced_total:
+          "合并到已有 mailbox 路由 key 的地址观测总数。",
+        ros_route_reconnect_total: "RouterOS transport 成功重连的总次数。",
+        ros_route_connect_attempt_total:
+          "RouterOS transport 发起连接尝试的总次数。",
+        ros_route_backoff_total: "RouterOS transport 安排退避等待的总次数。",
+        ros_route_reconcile_error_total: "常驻路由对账失败的总次数。",
+        ros_route_last_reconcile_success_timestamp_seconds:
+          "最近一次常驻路由对账成功的 Unix 时间。",
         ros_route_degraded: "RouterOS transport 当前是否处于降级状态。",
+        ros_route_cleanup_error_total: "关闭清理失败的路由条目总数。",
       },
       cardPriority: [
         "ros_route_write_success_total",
