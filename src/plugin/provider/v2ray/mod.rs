@@ -7,12 +7,13 @@ mod model;
 mod parser;
 mod selector;
 
-pub(crate) use model::{Cidr, Domain, GeoIp, GeoIpList, GeoSiteList};
+pub(crate) use model::{Cidr, Domain, DomainType, GeoIp, GeoIpList, GeoSite, GeoSiteList};
 pub(crate) use parser::{
-    ParsedDat, cidr_to_rule, detect_dat_kind, geoip_code, geosite_code, geosite_domain_expression,
-    geosite_domain_expression_original_with_attrs, parse_geoip_dat, parse_geosite_dat,
+    DatFileSession, ParsedDat, cidr_to_rule, detect_dat_kind, geoip_code, geosite_code,
+    geosite_domain_expression, geosite_domain_expression_original_with_attrs, parse_geoip_dat,
+    parse_geosite_dat,
 };
 pub(crate) use selector::{
-    geosite_domain_matches_selectors, matched_geosite_selectors, normalized_selectors,
-    parse_geosite_selectors, unique_nonempty_selectors,
+    GeoSiteSelector, geosite_domain_matches_selectors, matched_geosite_selectors,
+    normalized_selectors, parse_geosite_selectors, unique_nonempty_selectors,
 };

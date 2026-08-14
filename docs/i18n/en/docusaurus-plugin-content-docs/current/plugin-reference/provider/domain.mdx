@@ -345,8 +345,11 @@ This provider exposes two semantics:
 
 - Supports: basic domain rules, `@@`, `important`, `badfilter`, `denyallow`,
   and request-side `dnstype`
-- Unsupported but skipped with warnings: `/etc/hosts` style rules,
-  `dnsrewrite`, `$client`, `$ctag`, and unknown modifiers
+- Unsupported but skipped with summary warnings: URL/path filters,
+  `/etc/hosts` style rules, cosmetic filters, `dnsrewrite`, `$client`, `$ctag`,
+  and unknown modifiers
+- Initialization and reload stream rule files; skipped rules are summarized by
+  reason with at most five samples retained for each reason
 - Full precedence order:
   - `important` exceptions
   - `important` blocks

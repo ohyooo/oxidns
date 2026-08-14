@@ -3,19 +3,18 @@
 
 //! Persistent RouterOS route loading and normalization.
 
-use std::fs;
+use std::fmt::Display;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use ahash::AHashSet;
 
 use super::config::PersistentArgs;
 use crate::infra::error::{DnsError, Result};
+use crate::infra::io::{LineClassifier, TextSource};
 
 #[derive(Debug, Default)]
 pub(super) struct ParsedPersistentRoutes {
     pub(super) all_ips: AHashSet<String>,
-    pub(super) inline_ips: AHashSet<String>,
-    pub(super) files: Vec<String>,
     pub(super) ignored_by_gateway: usize,
     pub(super) ignored_default_route: usize,
 }
@@ -38,40 +37,13 @@ pub(super) fn parse_persistent_ips(
         return Ok(parsed);
     };
 
-    if let Some(ips) = route.ips {
-        for (index, item) in ips.into_iter().enumerate() {
-            let source = format!("persistent.ips[{index}]");
-            let cidr = parse_persistent_ip_item(item.as_str(), source.as_str())?;
-            if is_default_route_cidr(cidr.as_str()) {
-                parsed.ignored_default_route = parsed.ignored_default_route.saturating_add(1);
-                continue;
-            }
-            if !is_persistent_ip_family_enabled(
-                cidr.as_str(),
-                gateway4_enabled,
-                gateway6_enabled,
-                source.as_str(),
-            )? {
-                parsed.ignored_by_gateway = parsed.ignored_by_gateway.saturating_add(1);
-                continue;
-            }
-            parsed.inline_ips.insert(cidr.clone());
-            parsed.all_ips.insert(cidr);
-        }
-    }
-
-    parsed.files = parse_persistent_files(route.files)?;
-    let (file_ips, ignored_from_files, ignored_default_from_files) =
-        load_persistent_ips_from_files(
-            parsed.files.as_slice(),
-            gateway4_enabled,
-            gateway6_enabled,
-        )?;
-    parsed.ignored_by_gateway = parsed.ignored_by_gateway.saturating_add(ignored_from_files);
-    parsed.ignored_default_route = parsed
-        .ignored_default_route
-        .saturating_add(ignored_default_from_files);
-    parsed.all_ips.extend(file_ips);
+    let ips = route.ips.unwrap_or_default();
+    let files = parse_persistent_files(route.files)?;
+    let (all_ips, ignored_by_gateway, ignored_default_route) =
+        load_persistent_ips(&ips, &files, gateway4_enabled, gateway6_enabled)?;
+    parsed.all_ips = all_ips;
+    parsed.ignored_by_gateway = ignored_by_gateway;
+    parsed.ignored_default_route = ignored_default_route;
 
     Ok(parsed)
 }
@@ -93,44 +65,8 @@ fn parse_persistent_files(files: Option<Vec<String>>) -> Result<Vec<String>> {
     Ok(out)
 }
 
-fn load_persistent_ips_from_content(
-    source_prefix: &str,
-    content: &str,
-    gateway4_enabled: bool,
-    gateway6_enabled: bool,
-) -> Result<(AHashSet<String>, usize, usize)> {
-    let mut out = AHashSet::new();
-    let mut ignored_by_gateway = 0usize;
-    let mut ignored_default_route = 0usize;
-
-    for (line_no, line) in content.lines().enumerate() {
-        let token = line.split('#').next().unwrap_or_default().trim();
-        if token.is_empty() {
-            continue;
-        }
-
-        let source = format!("{source_prefix} line {}", line_no + 1);
-        let cidr = parse_persistent_ip_item(token, source.as_str())?;
-        if is_default_route_cidr(cidr.as_str()) {
-            ignored_default_route = ignored_default_route.saturating_add(1);
-            continue;
-        }
-        if !is_persistent_ip_family_enabled(
-            cidr.as_str(),
-            gateway4_enabled,
-            gateway6_enabled,
-            source.as_str(),
-        )? {
-            ignored_by_gateway = ignored_by_gateway.saturating_add(1);
-            continue;
-        }
-        out.insert(cidr);
-    }
-
-    Ok((out, ignored_by_gateway, ignored_default_route))
-}
-
-pub(super) fn load_persistent_ips_from_files(
+fn load_persistent_ips(
+    inline: &[String],
     files: &[String],
     gateway4_enabled: bool,
     gateway6_enabled: bool,
@@ -139,24 +75,31 @@ pub(super) fn load_persistent_ips_from_files(
     let mut ignored_by_gateway = 0usize;
     let mut ignored_default_route = 0usize;
 
-    for (index, file) in files.iter().enumerate() {
-        let content = fs::read_to_string(file).map_err(|e| {
-            DnsError::plugin(format!(
-                "ros_route failed to read persistent route file '{file}': {e}"
-            ))
-        })?;
-        let source_prefix = format!("persistent.files[{index}]");
-        let (loaded, ignored_by_gateway_delta, ignored_default_delta) =
-            load_persistent_ips_from_content(
-                source_prefix.as_str(),
-                &content,
-                gateway4_enabled,
-                gateway6_enabled,
-            )?;
-        out.extend(loaded);
-        ignored_by_gateway = ignored_by_gateway.saturating_add(ignored_by_gateway_delta);
-        ignored_default_route = ignored_default_route.saturating_add(ignored_default_delta);
-    }
+    TextSource::new("persistent.ips", inline, files)
+        .scan(&LineClassifier::new(&["#"]), |line| -> Result<()> {
+            if line.annotations().blank || line.annotations().leading_comment.is_some() {
+                return Ok(());
+            }
+            let raw = line.raw();
+            let token = raw.split('#').next().unwrap_or_default().trim();
+            if token.is_empty() {
+                return Ok(());
+            }
+            let source = line.location();
+            let cidr = parse_persistent_ip_item(token, source)?;
+            if is_default_route_cidr(&cidr) {
+                ignored_default_route = ignored_default_route.saturating_add(1);
+                return Ok(());
+            }
+            if !is_persistent_ip_family_enabled(&cidr, gateway4_enabled, gateway6_enabled, source)?
+            {
+                ignored_by_gateway = ignored_by_gateway.saturating_add(1);
+                return Ok(());
+            }
+            out.insert(cidr);
+            Ok(())
+        })
+        .map_err(|error| DnsError::plugin(format!("failed to load persistent routes: {error}")))?;
 
     Ok((out, ignored_by_gateway, ignored_default_route))
 }
@@ -166,7 +109,7 @@ pub(super) fn load_persistent_ips_from_files(
 /// Rules:
 /// - plain IPv4/IPv6 becomes `/32` or `/128`
 /// - CIDR keeps its configured prefix and is normalized to network address
-fn parse_persistent_ip_item(raw: &str, source: &str) -> Result<String> {
+fn parse_persistent_ip_item(raw: &str, source: impl Display) -> Result<String> {
     let value = raw.trim();
     if value.is_empty() {
         return Err(DnsError::plugin(format!("ros_route {source} is empty")));
@@ -234,7 +177,7 @@ fn is_persistent_ip_family_enabled(
     cidr: &str,
     gateway4_enabled: bool,
     gateway6_enabled: bool,
-    source: &str,
+    source: impl Display,
 ) -> Result<bool> {
     let (ip_raw, _) = cidr.split_once('/').ok_or_else(|| {
         DnsError::plugin(format!(
@@ -251,5 +194,30 @@ fn is_persistent_ip_family_enabled(
         IpAddr::V4(_) if !gateway4_enabled => Ok(false),
         IpAddr::V6(_) if !gateway6_enabled => Ok(false),
         _ => Ok(true),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use tempfile::NamedTempFile;
+
+    use super::*;
+
+    #[test]
+    fn persistent_files_stream_into_final_set_with_counts() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "# comment\n192.0.2.9\n192.0.2.1/24 # normalized\n0.0.0.0/0\n2001:db8::1"
+        )
+        .unwrap();
+        let (rules, ignored_family, ignored_default) =
+            load_persistent_ips(&[], &[file.path().display().to_string()], true, false).unwrap();
+        assert!(rules.contains("192.0.2.9/32"));
+        assert!(rules.contains("192.0.2.0/24"));
+        assert_eq!(ignored_family, 1);
+        assert_eq!(ignored_default, 1);
     }
 }

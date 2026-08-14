@@ -3,7 +3,7 @@
 
 //! Persistent RouterOS address-list rule loading and normalization.
 
-use std::fs;
+use std::fmt::Display;
 use std::net::IpAddr;
 
 use ahash::AHashSet;
@@ -11,6 +11,7 @@ use ahash::AHashSet;
 use super::config::PersistentArgs;
 use super::model::{AddressListFamily, AddressListKey};
 use crate::infra::error::{DnsError, Result};
+use crate::infra::io::{LineClassifier, TextSource};
 
 #[derive(Debug, Default)]
 pub(super) struct ParsedPersistentItems {
@@ -35,31 +36,12 @@ pub(super) fn parse_persistent_items(
         return Ok(parsed);
     };
 
-    if let Some(ips) = persistent.ips {
-        for (index, item) in ips.into_iter().enumerate() {
-            let source = format!("persistent.ips[{index}]");
-            let key = parse_persistent_item(
-                item.as_str(),
-                source.as_str(),
-                address_list4,
-                address_list6,
-            )?;
-            match key {
-                Some(key) => {
-                    parsed.all_items.insert(key);
-                }
-                None => {
-                    parsed.ignored_by_family = parsed.ignored_by_family.saturating_add(1);
-                }
-            }
-        }
-    }
-
+    let ips = persistent.ips.unwrap_or_default();
     let files = parse_persistent_files(persistent.files)?;
-    let (file_items, ignored_by_family) =
-        load_persistent_items_from_files(files.as_slice(), address_list4, address_list6)?;
-    parsed.ignored_by_family = parsed.ignored_by_family.saturating_add(ignored_by_family);
-    parsed.all_items.extend(file_items);
+    let (all_items, ignored_by_family) =
+        load_persistent_items(&ips, &files, address_list4, address_list6)?;
+    parsed.all_items = all_items;
+    parsed.ignored_by_family = ignored_by_family;
     Ok(parsed)
 }
 
@@ -85,6 +67,7 @@ pub(super) fn parse_persistent_files(files: Option<Vec<String>>) -> Result<Vec<S
 /// Files use the same item grammar as inline YAML. Empty lines and `#` comments
 /// are ignored. Family-mismatched entries are skipped rather than failing
 /// startup so shared source files can contain both IPv4 and IPv6 items.
+#[cfg(test)]
 pub(super) fn load_persistent_items_from_content(
     source_prefix: &str,
     content: &str,
@@ -114,7 +97,8 @@ pub(super) fn load_persistent_items_from_content(
     Ok((out, ignored_by_family))
 }
 
-fn load_persistent_items_from_files(
+fn load_persistent_items(
+    inline: &[String],
     files: &[String],
     address_list4: Option<&str>,
     address_list6: Option<&str>,
@@ -122,22 +106,29 @@ fn load_persistent_items_from_files(
     let mut out = AHashSet::new();
     let mut ignored_by_family = 0usize;
 
-    for (index, file) in files.iter().enumerate() {
-        let content = fs::read_to_string(file).map_err(|e| {
+    TextSource::new("persistent.ips", inline, files)
+        .scan(&LineClassifier::new(&["#"]), |line| -> Result<()> {
+            if line.annotations().blank || line.annotations().leading_comment.is_some() {
+                return Ok(());
+            }
+            let raw = line.raw();
+            let token = raw.split('#').next().unwrap_or_default().trim();
+            if token.is_empty() {
+                return Ok(());
+            }
+            match parse_persistent_item(token, line.location(), address_list4, address_list6)? {
+                Some(key) => {
+                    out.insert(key);
+                }
+                None => ignored_by_family = ignored_by_family.saturating_add(1),
+            }
+            Ok(())
+        })
+        .map_err(|error| {
             DnsError::plugin(format!(
-                "ros_address_list failed to read persistent file '{file}': {e}"
+                "failed to load persistent address-list rules: {error}"
             ))
         })?;
-        let source_prefix = format!("persistent.files[{index}]");
-        let (loaded, ignored_delta) = load_persistent_items_from_content(
-            source_prefix.as_str(),
-            &content,
-            address_list4,
-            address_list6,
-        )?;
-        out.extend(loaded);
-        ignored_by_family = ignored_by_family.saturating_add(ignored_delta);
-    }
 
     Ok((out, ignored_by_family))
 }
@@ -148,7 +139,7 @@ fn load_persistent_items_from_files(
 /// target list, allowing callers to ignore mixed-family source files cleanly.
 fn parse_persistent_item(
     raw: &str,
-    source: &str,
+    source: impl Display,
     address_list4: Option<&str>,
     address_list6: Option<&str>,
 ) -> Result<Option<AddressListKey>> {
