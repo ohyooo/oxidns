@@ -9,9 +9,9 @@ mod selector;
 
 pub(crate) use model::{Cidr, Domain, DomainType, GeoIp, GeoIpList, GeoSite, GeoSiteList};
 pub(crate) use parser::{
-    ParsedDat, cidr_to_rule, detect_dat_kind, geoip_code, geosite_code, geosite_domain_expression,
-    geosite_domain_expression_original_with_attrs, parse_geoip_dat, parse_geosite_dat,
-    visit_geoip_file, visit_geosite_file,
+    DatFileSession, ParsedDat, cidr_to_rule, detect_dat_kind, geoip_code, geosite_code,
+    geosite_domain_expression, geosite_domain_expression_original_with_attrs, parse_geoip_dat,
+    parse_geosite_dat,
 };
 pub(crate) use selector::{
     GeoSiteSelector, geosite_domain_matches_selectors, matched_geosite_selectors,

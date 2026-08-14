@@ -369,9 +369,6 @@ fn normalize_domain_cow(raw: &str) -> Cow<'_, str> {
 
 fn compile_regex_pattern(raw: &str) -> Result<PatternMatcher, String> {
     let body = regex_body(raw)?;
-    if body.trim().is_empty() {
-        return Err("empty regex rule".to_string());
-    }
     let regex = RegexBuilder::new(body)
         .case_insensitive(true)
         .build()
@@ -380,9 +377,14 @@ fn compile_regex_pattern(raw: &str) -> Result<PatternMatcher, String> {
 }
 
 fn regex_body(raw: &str) -> Result<&str, String> {
-    raw.strip_prefix('/')
+    let body = raw
+        .strip_prefix('/')
         .and_then(|value| value.strip_suffix('/'))
-        .ok_or_else(|| "unterminated regex rule".to_string())
+        .ok_or_else(|| "unterminated regex rule".to_string())?;
+    if body.trim().is_empty() {
+        return Err("empty regex rule".to_string());
+    }
+    Ok(body)
 }
 
 fn translate_pattern_to_regex(raw: &str) -> Result<String, String> {

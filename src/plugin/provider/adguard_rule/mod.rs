@@ -279,6 +279,21 @@ mod tests {
     }
 
     #[test]
+    fn empty_badfilter_regex_is_rejected_during_planning() {
+        for rule in ["//$badfilter", "/   /$badfilter"] {
+            let cfg = config::AdGuardRuleConfig {
+                rules: vec![rule.to_string()],
+                files: Vec::new(),
+            };
+
+            let error = build_rule_buckets("agh", &cfg).unwrap_err().to_string();
+
+            assert!(error.contains("args.rules[0]"), "{error}");
+            assert!(error.contains("empty regex rule"), "{error}");
+        }
+    }
+
+    #[test]
     fn denyallow_excludes_domains() {
         let compiled = compile_test_rule("||example.org^$denyallow=sub.example.org");
 

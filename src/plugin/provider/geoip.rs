@@ -20,7 +20,7 @@ use crate::infra::error::{DnsError, Result as DnsResult};
 use crate::infra::task::spawn_isolated_build;
 use crate::plugin::provider::Provider;
 use crate::plugin::provider::v2ray::{
-    Cidr, GeoIp, geoip_code, normalized_selectors, visit_geoip_file,
+    Cidr, DatFileSession, GeoIp, geoip_code, normalized_selectors,
 };
 use crate::plugin::{Plugin, PluginFactory, UninitializedPlugin};
 use crate::plugin_factory;
@@ -51,42 +51,46 @@ impl GeoIpProvider {
         let start_ms = AppClock::elapsed_millis();
         let requested_selectors = normalized_selectors(&args.selectors);
         let path = Path::new(&args.file);
+        let mut source =
+            DatFileSession::open(path).map_err(|error| geoip_file_error(tag, args, error))?;
         let mut matched_entries = 0usize;
         let mut v4_capacity = 0usize;
         let mut v6_capacity = 0usize;
-        visit_geoip_file(path, |entry| {
-            if !matches_selector(&entry, &requested_selectors) {
-                return Ok(());
-            }
-            matched_entries += 1;
-            for cidr in &entry.cidr {
-                match cidr.ip.len() {
-                    4 => v4_capacity += 1,
-                    16 => v6_capacity += 1,
-                    len => {
-                        return Err(format!(
-                            "invalid CIDR byte length {len} in geoip code '{}'",
-                            geoip_code(&entry)
-                        ));
+        source
+            .visit_geoip(|entry| {
+                if !matches_selector(&entry, &requested_selectors) {
+                    return Ok(());
+                }
+                matched_entries += 1;
+                for cidr in &entry.cidr {
+                    match cidr.ip.len() {
+                        4 => v4_capacity += 1,
+                        16 => v6_capacity += 1,
+                        len => {
+                            return Err(format!(
+                                "invalid CIDR byte length {len} in geoip code '{}'",
+                                geoip_code(&entry)
+                            ));
+                        }
                     }
                 }
-            }
-            Ok(())
-        })
-        .map_err(|error| geoip_file_error(tag, args, error))?;
+                Ok(())
+            })
+            .map_err(|error| geoip_file_error(tag, args, error))?;
         let mut matcher = IpPrefixMatcher::default();
         matcher.reserve_rules(v4_capacity, v6_capacity);
-        visit_geoip_file(path, |entry| {
-            if matches_selector(&entry, &requested_selectors) {
-                let code = geoip_code(&entry);
-                for cidr in &entry.cidr {
-                    add_geoip_cidr(&mut matcher, cidr, tag, code)
-                        .map_err(|error| error.to_string())?;
+        source
+            .visit_geoip(|entry| {
+                if matches_selector(&entry, &requested_selectors) {
+                    let code = geoip_code(&entry);
+                    for cidr in &entry.cidr {
+                        add_geoip_cidr(&mut matcher, cidr, tag, code)
+                            .map_err(|error| error.to_string())?;
+                    }
                 }
-            }
-            Ok(())
-        })
-        .map_err(|error| geoip_file_error(tag, args, error))?;
+                Ok(())
+            })
+            .map_err(|error| geoip_file_error(tag, args, error))?;
 
         if matched_entries == 0 && !requested_selectors.is_empty() {
             return Err(DnsError::plugin(format!(

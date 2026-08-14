@@ -3,7 +3,7 @@
 
 use std::fs::File;
 use std::io::{BufReader, Read, Seek};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use prost::Message;
 
@@ -106,34 +106,68 @@ pub(crate) fn parse_geoip_dat(data: &[u8]) -> Result<GeoIpList, String> {
         .ok_or_else(|| "decoded geoip payload failed structural validation".to_string())
 }
 
-pub(crate) fn visit_geosite_file<F>(path: &Path, on_entry: F) -> Result<(), String>
-where
-    F: FnMut(GeoSite) -> Result<(), String>,
-{
-    visit_top_level_entries::<GeoSite, _>(path, on_entry)
+/// One opened protobuf file that can be replayed without following a replaced
+/// path between planning and compilation passes.
+#[derive(Debug)]
+pub(crate) struct DatFileSession {
+    path: PathBuf,
+    file: File,
+    file_len: u64,
 }
 
-pub(crate) fn visit_geoip_file<F>(path: &Path, on_entry: F) -> Result<(), String>
-where
-    F: FnMut(GeoIp) -> Result<(), String>,
-{
-    visit_top_level_entries::<GeoIp, _>(path, on_entry)
+impl DatFileSession {
+    pub(crate) fn open(path: &Path) -> Result<Self, String> {
+        let file = File::open(path)
+            .map_err(|error| format!("failed to open '{}': {error}", path.display()))?;
+        let file_len = file
+            .metadata()
+            .map_err(|error| format!("failed to inspect '{}': {error}", path.display()))?
+            .len();
+        Ok(Self {
+            path: path.to_path_buf(),
+            file,
+            file_len,
+        })
+    }
+
+    pub(crate) fn visit_geosite<F>(&mut self, on_entry: F) -> Result<(), String>
+    where
+        F: FnMut(GeoSite) -> Result<(), String>,
+    {
+        self.visit::<GeoSite, _>(on_entry)
+    }
+
+    pub(crate) fn visit_geoip<F>(&mut self, on_entry: F) -> Result<(), String>
+    where
+        F: FnMut(GeoIp) -> Result<(), String>,
+    {
+        self.visit::<GeoIp, _>(on_entry)
+    }
+
+    fn visit<M, F>(&mut self, on_entry: F) -> Result<(), String>
+    where
+        M: Message + Default,
+        F: FnMut(M) -> Result<(), String>,
+    {
+        self.file
+            .rewind()
+            .map_err(|error| format!("failed to rewind '{}': {error}", self.path.display()))?;
+        let mut reader = BufReader::with_capacity(256 * 1024, &mut self.file);
+        visit_top_level_entries::<M, _>(&mut reader, self.file_len, on_entry)
+    }
 }
 
-fn visit_top_level_entries<M, F>(path: &Path, mut on_entry: F) -> Result<(), String>
+fn visit_top_level_entries<M, F>(
+    reader: &mut (impl Read + Seek),
+    file_len: u64,
+    mut on_entry: F,
+) -> Result<(), String>
 where
     M: Message + Default,
     F: FnMut(M) -> Result<(), String>,
 {
-    let file = File::open(path)
-        .map_err(|error| format!("failed to open '{}': {error}", path.display()))?;
-    let file_len = file
-        .metadata()
-        .map_err(|error| format!("failed to inspect '{}': {error}", path.display()))?
-        .len();
-    let mut reader = BufReader::with_capacity(256 * 1024, file);
     let mut payload = Vec::new();
-    while let Some(key) = read_varint(&mut reader, true)? {
+    while let Some(key) = read_varint(reader, true)? {
         if key == 0 {
             return Err("protobuf field key must not be zero".to_string());
         }
@@ -145,7 +179,7 @@ where
                     "protobuf entry field has unexpected wire type {wire}"
                 ));
             }
-            let encoded_len = read_required_varint(&mut reader)?;
+            let encoded_len = read_required_varint(reader)?;
             let position = reader
                 .stream_position()
                 .map_err(|error| format!("failed to locate protobuf entry: {error}"))?;
@@ -165,7 +199,7 @@ where
                 .map_err(|error| format!("failed to decode protobuf entry: {error}"))?;
             on_entry(entry)?;
         } else {
-            skip_field(&mut reader, wire, field, 0)?;
+            skip_field(reader, wire, field, 0)?;
         }
     }
     Ok(())
@@ -304,9 +338,16 @@ fn is_valid_geoip_list(list: &GeoIpList) -> bool {
 mod streaming_tests {
     use std::io::Write;
 
-    use tempfile::NamedTempFile;
+    use tempfile::{NamedTempFile, TempDir};
 
     use super::*;
+
+    fn visit_geosite_file<F>(path: &Path, on_entry: F) -> Result<(), String>
+    where
+        F: FnMut(GeoSite) -> Result<(), String>,
+    {
+        DatFileSession::open(path)?.visit_geosite(on_entry)
+    }
 
     #[test]
     fn streams_entries_and_skips_unknown_top_level_fields() {
@@ -346,6 +387,54 @@ mod streaming_tests {
         })
         .unwrap();
         assert_eq!(codes, vec!["CN", "US"]);
+    }
+
+    #[test]
+    fn dat_session_replays_opened_snapshot_after_path_replacement() {
+        fn encoded_site(code: &str) -> Vec<u8> {
+            GeoSiteList {
+                entry: vec![GeoSite {
+                    country_code: code.to_string(),
+                    domain: vec![Domain {
+                        r#type: DomainType::RootDomain as i32,
+                        value: format!("{code}.example"),
+                        attribute: Vec::new(),
+                    }],
+                    resource_hash: Vec::new(),
+                    code: String::new(),
+                    file_path: String::new(),
+                }],
+            }
+            .encode_to_vec()
+        }
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("geosite.dat");
+        let replacement = dir.path().join("replacement.dat");
+        std::fs::write(&path, encoded_site("OLD")).unwrap();
+        std::fs::write(&replacement, encoded_site("NEW")).unwrap();
+        let mut session = DatFileSession::open(&path).unwrap();
+
+        let mut first = Vec::new();
+        session
+            .visit_geosite(|entry| {
+                first.push(geosite_code(&entry).to_string());
+                Ok(())
+            })
+            .unwrap();
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::rename(&replacement, &path).unwrap();
+        let mut replayed = Vec::new();
+        session
+            .visit_geosite(|entry| {
+                replayed.push(geosite_code(&entry).to_string());
+                Ok(())
+            })
+            .unwrap();
+
+        assert_eq!(first, vec!["OLD"]);
+        assert_eq!(replayed, first);
     }
 
     #[test]

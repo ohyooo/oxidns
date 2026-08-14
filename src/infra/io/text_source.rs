@@ -10,8 +10,10 @@
 
 use std::fmt::{Display, Formatter};
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, Seek};
+use std::io::{self, BufRead, BufReader, Read, Seek};
 use std::path::PathBuf;
+
+use sha2::{Digest, Sha256};
 
 const TEXT_READER_CAPACITY: usize = 256 * 1024;
 
@@ -36,26 +38,42 @@ impl<'a> TextSource<'a> {
         }
     }
 
-    /// Open a stable set of file handles that can be replayed across scans.
+    /// Open a replay session whose scans are guaranteed to use identical input.
     ///
-    /// Atomic path replacement after this call does not change the files seen
-    /// by subsequent scans because every pass rewinds the same handles. The
-    /// session does not retain file contents or per-file reader buffers.
+    /// A single source file is kept open and rewound between scans. Multi-file
+    /// sources are reopened one at a time and verified against fingerprints
+    /// captured by the first scan, bounding descriptor use without retaining
+    /// file contents. A changed file aborts the candidate build.
     #[allow(dead_code)]
     pub(crate) fn open_replay(
         &self,
     ) -> Result<TextSourceSession<'a>, TextScanError<std::convert::Infallible>> {
-        let mut files = Vec::with_capacity(self.files.len());
-        for path in self.files {
-            if path.trim().is_empty() {
-                continue;
+        let paths = self
+            .files
+            .iter()
+            .map(String::as_str)
+            .filter(|path| !path.trim().is_empty())
+            .collect::<Vec<_>>();
+        let files = if paths.len() <= 1 {
+            let mut opened = Vec::with_capacity(paths.len());
+            for path in paths {
+                opened.push(OpenTextFile {
+                    path,
+                    file: open_file(path)?,
+                });
             }
-            let file = File::open(path).map_err(|source| TextScanError::Open {
-                path: PathBuf::from(path),
-                source,
-            })?;
-            files.push(OpenTextFile { path, file });
-        }
+            ReplayFiles::Opened(opened)
+        } else {
+            // Preserve eager open-error reporting while never retaining more
+            // than one descriptor for a multi-file source.
+            for path in &paths {
+                drop(open_file(path)?);
+            }
+            ReplayFiles::Verified {
+                paths,
+                fingerprints: None,
+            }
+        };
         Ok(TextSourceSession {
             inline_field: self.inline_field,
             inline: self.inline,
@@ -94,13 +112,23 @@ impl<'a> TextSource<'a> {
     }
 }
 
-/// An opened text source whose file identities remain stable across scans.
+/// A text source session that rejects inconsistent input across replay scans.
 #[derive(Debug)]
 #[allow(dead_code)]
 pub(crate) struct TextSourceSession<'a> {
     inline_field: &'a str,
     inline: &'a [String],
-    files: Vec<OpenTextFile<'a>>,
+    files: ReplayFiles<'a>,
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+enum ReplayFiles<'a> {
+    Opened(Vec<OpenTextFile<'a>>),
+    Verified {
+        paths: Vec<&'a str>,
+        fingerprints: Option<Vec<[u8; 32]>>,
+    },
 }
 
 #[derive(Debug)]
@@ -111,7 +139,7 @@ struct OpenTextFile<'a> {
 }
 
 impl TextSourceSession<'_> {
-    /// Replay inline values and the opened files from their beginnings.
+    /// Replay inline values and files from their beginnings.
     #[allow(dead_code)]
     pub(crate) fn scan<E, F>(
         &mut self,
@@ -123,23 +151,88 @@ impl TextSourceSession<'_> {
     {
         visit_inline(self.inline_field, self.inline, classifier, &mut visitor)?;
 
-        let mut buffer = String::with_capacity(256);
-        for opened in &mut self.files {
-            opened.file.rewind().map_err(|source| TextScanError::Read {
-                path: PathBuf::from(opened.path),
-                line: 1,
-                source,
-            })?;
-            let mut reader = BufReader::with_capacity(TEXT_READER_CAPACITY, &mut opened.file);
-            visit_reader(
-                &mut reader,
-                opened.path,
-                classifier,
-                &mut buffer,
-                &mut visitor,
-            )?;
+        match &mut self.files {
+            ReplayFiles::Opened(files) => {
+                let mut buffer = String::with_capacity(256);
+                for opened in files {
+                    opened.file.rewind().map_err(|source| TextScanError::Read {
+                        path: PathBuf::from(opened.path),
+                        line: 1,
+                        source,
+                    })?;
+                    let mut reader =
+                        BufReader::with_capacity(TEXT_READER_CAPACITY, &mut opened.file);
+                    visit_reader(
+                        &mut reader,
+                        opened.path,
+                        classifier,
+                        &mut buffer,
+                        &mut visitor,
+                    )?;
+                }
+            }
+            ReplayFiles::Verified {
+                paths,
+                fingerprints,
+            } => {
+                let capture_fingerprints = fingerprints.is_none();
+                let mut captured = capture_fingerprints.then(|| Vec::with_capacity(paths.len()));
+                let mut buffer = String::with_capacity(256);
+                for (index, path) in paths.iter().copied().enumerate() {
+                    let file = open_file(path)?;
+                    let hashing_reader = FingerprintReader::new(file);
+                    let mut reader = BufReader::with_capacity(TEXT_READER_CAPACITY, hashing_reader);
+                    visit_reader(&mut reader, path, classifier, &mut buffer, &mut visitor)?;
+                    let fingerprint = reader.into_inner().finish();
+                    if let Some(expected) = fingerprints.as_ref() {
+                        if expected[index] != fingerprint {
+                            return Err(TextScanError::Changed {
+                                path: PathBuf::from(path),
+                            });
+                        }
+                    } else if let Some(captured) = &mut captured {
+                        captured.push(fingerprint);
+                    }
+                }
+                if let Some(captured) = captured {
+                    *fingerprints = Some(captured);
+                }
+            }
         }
         Ok(())
+    }
+}
+
+fn open_file<E>(path: &str) -> Result<File, TextScanError<E>> {
+    File::open(path).map_err(|source| TextScanError::Open {
+        path: PathBuf::from(path),
+        source,
+    })
+}
+
+struct FingerprintReader<R> {
+    inner: R,
+    hasher: Sha256,
+}
+
+impl<R> FingerprintReader<R> {
+    fn new(inner: R) -> Self {
+        Self {
+            inner,
+            hasher: Sha256::new(),
+        }
+    }
+
+    fn finish(self) -> [u8; 32] {
+        self.hasher.finalize().into()
+    }
+}
+
+impl<R: Read> Read for FingerprintReader<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let read = self.inner.read(buffer)?;
+        self.hasher.update(&buffer[..read]);
+        Ok(read)
     }
 }
 
@@ -339,7 +432,7 @@ impl<'a> LineClassifier<'a> {
     }
 }
 
-/// Failure while opening, reading, or consuming a text source.
+/// Failure while opening, reading, replaying, or consuming a text source.
 #[derive(Debug)]
 pub(crate) enum TextScanError<E> {
     Open {
@@ -350,6 +443,9 @@ pub(crate) enum TextScanError<E> {
         path: PathBuf,
         line: usize,
         source: io::Error,
+    },
+    Changed {
+        path: PathBuf,
     },
     Consumer {
         location: OwnedTextLocation,
@@ -372,6 +468,11 @@ impl<E: Display> Display for TextScanError<E> {
                 "failed to read text source '{}' at line {line}: {source}",
                 path.display()
             ),
+            Self::Changed { path } => write!(
+                f,
+                "text source '{}' changed between replay scans",
+                path.display()
+            ),
             Self::Consumer { location, source } => write!(f, "{location}: {source}"),
         }
     }
@@ -384,6 +485,7 @@ where
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Open { source, .. } | Self::Read { source, .. } => Some(source),
+            Self::Changed { .. } => None,
             Self::Consumer { source, .. } => Some(source),
         }
     }
@@ -516,6 +618,48 @@ mod tests {
             })
             .unwrap();
         assert_eq!(reopened, vec!["new"]);
+    }
+
+    #[test]
+    fn replay_session_bounds_descriptors_and_rejects_changed_multi_file_input() {
+        let dir = TempDir::new().unwrap();
+        let first_path = dir.path().join("first.txt");
+        let second_path = dir.path().join("second.txt");
+        let replacement = dir.path().join("replacement.txt");
+        std::fs::write(&first_path, "first\n").unwrap();
+        std::fs::write(&second_path, "old\n").unwrap();
+        std::fs::write(&replacement, "new\n").unwrap();
+        let files = vec![
+            first_path.display().to_string(),
+            second_path.display().to_string(),
+        ];
+        let source = TextSource::new("rules", &[], &files);
+        let mut session = source.open_replay().unwrap();
+        assert!(matches!(
+            &session.files,
+            ReplayFiles::Verified {
+                fingerprints: None,
+                ..
+            }
+        ));
+
+        session
+            .scan(&LineClassifier::default(), |_| Ok::<_, String>(()))
+            .unwrap();
+        assert!(matches!(
+            &session.files,
+            ReplayFiles::Verified {
+                fingerprints: Some(fingerprints),
+                ..
+            } if fingerprints.len() == 2
+        ));
+
+        std::fs::remove_file(&second_path).unwrap();
+        std::fs::rename(&replacement, &second_path).unwrap();
+        let error = session
+            .scan(&LineClassifier::default(), |_| Ok::<_, String>(()))
+            .unwrap_err();
+        assert!(matches!(error, TextScanError::Changed { path } if path == second_path));
     }
 
     #[test]

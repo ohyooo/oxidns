@@ -19,8 +19,8 @@ use crate::infra::error::{DnsError, Result as DnsResult};
 use crate::infra::task::spawn_isolated_build;
 use crate::plugin::provider::Provider;
 use crate::plugin::provider::v2ray::{
-    Domain, DomainType, GeoSite, geosite_code, geosite_domain_matches_selectors,
-    matched_geosite_selectors, parse_geosite_selectors, visit_geosite_file,
+    DatFileSession, Domain, DomainType, GeoSite, geosite_code, geosite_domain_matches_selectors,
+    matched_geosite_selectors, parse_geosite_selectors,
 };
 use crate::plugin::{Plugin, PluginFactory, UninitializedPlugin};
 use crate::plugin_factory;
@@ -55,37 +55,41 @@ impl GeoSiteProvider {
             ))
         })?;
         let path = Path::new(&args.file);
+        let mut source =
+            DatFileSession::open(path).map_err(|error| geosite_file_error(tag, args, error))?;
         let mut matched_entries = 0usize;
         let mut matched_domains = 0usize;
         let mut full = 0usize;
         let mut keyword = 0usize;
         let mut regexp = 0usize;
-        visit_geosite_file(path, |entry| {
-            visit_selected_geosite_domains(&entry, &selectors, |domain| {
-                match geosite_domain_kind(domain)? {
-                    DomainRuleKind::Full => full += 1,
-                    DomainRuleKind::Keyword => keyword += 1,
-                    DomainRuleKind::Regexp => regexp += 1,
-                    DomainRuleKind::Domain => {}
-                }
-                matched_domains += 1;
-                Ok(())
+        source
+            .visit_geosite(|entry| {
+                visit_selected_geosite_domains(&entry, &selectors, |domain| {
+                    match geosite_domain_kind(domain)? {
+                        DomainRuleKind::Full => full += 1,
+                        DomainRuleKind::Keyword => keyword += 1,
+                        DomainRuleKind::Regexp => regexp += 1,
+                        DomainRuleKind::Domain => {}
+                    }
+                    matched_domains += 1;
+                    Ok(())
+                })
+                .map(|matched| matched_entries += usize::from(matched))
             })
-            .map(|matched| matched_entries += usize::from(matched))
-        })
-        .map_err(|error| geosite_file_error(tag, args, error))?;
+            .map_err(|error| geosite_file_error(tag, args, error))?;
         let mut matcher = DomainRuleMatcher::default();
         matcher.reserve_rules(full, keyword, regexp);
-        visit_geosite_file(path, |entry| {
-            visit_selected_geosite_domains(&entry, &selectors, |domain| {
-                let kind = geosite_domain_kind(domain)?;
-                matcher
-                    .add_rule(kind, &domain.value, "")
-                    .map_err(|error| format!("geosite code '{}' {error}", geosite_code(&entry)))
-            })?;
-            Ok(())
-        })
-        .map_err(|error| geosite_file_error(tag, args, error))?;
+        source
+            .visit_geosite(|entry| {
+                visit_selected_geosite_domains(&entry, &selectors, |domain| {
+                    let kind = geosite_domain_kind(domain)?;
+                    matcher
+                        .add_rule(kind, &domain.value, "")
+                        .map_err(|error| format!("geosite code '{}' {error}", geosite_code(&entry)))
+                })?;
+                Ok(())
+            })
+            .map_err(|error| geosite_file_error(tag, args, error))?;
 
         if matched_entries == 0 && !selectors.is_empty() {
             return Err(DnsError::plugin(format!(
