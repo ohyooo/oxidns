@@ -31,7 +31,7 @@ use serde_yaml_ng::Value;
 use crate::config::types::PluginConfig;
 use crate::core::context::DnsContext;
 use crate::infra::error::{DnsError, Result};
-use crate::infra::io::{LineClassifier, TextSource};
+use crate::infra::io::{LineClassifier, TextLocation, TextSource};
 use crate::infra::observability::metrics::{
     MetricLabel, MetricSample, MetricSink, MetricSource, register_metric_source,
     unregister_metric_source,
@@ -282,14 +282,17 @@ fn build_rule_index(cfg: &HostsConfig) -> Result<RuleIndex> {
         .scan(
             &LineClassifier::new(&["#"]),
             |line| -> std::result::Result<(), String> {
-                if line.annotations().blank || line.annotations().leading_comment.is_some() {
-                    return Ok(());
-                }
-                let raw = line.raw();
-                let rule_text = raw.split_once('#').map_or(raw, |(left, _)| left).trim();
-                if rule_text.is_empty() {
-                    return Ok(());
-                }
+                let rule_text = match line.location() {
+                    TextLocation::Inline { .. } => line.raw().trim(),
+                    TextLocation::File { .. } => {
+                        if line.annotations().blank || line.annotations().leading_comment.is_some()
+                        {
+                            return Ok(());
+                        }
+                        let raw = line.raw();
+                        raw.split_once('#').map_or(raw, |(left, _)| left).trim()
+                    }
+                };
                 let rule = parse_hosts_line(rule_text)
                     .map_err(|error| format!("invalid hosts rule '{rule_text}': {error}"))?;
                 builder.add_rule(rule);
@@ -626,6 +629,23 @@ mod tests {
         assert!(parse_hosts_line("").is_err());
         assert!(parse_hosts_line("full:example.com").is_err());
         assert!(parse_hosts_line("full:example.com 1.1.1.1").is_ok());
+    }
+
+    #[test]
+    fn inline_regexp_preserves_hash_while_file_comments_are_stripped() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "# ignored").unwrap();
+        writeln!(file, "full:file.example 192.0.2.2 # trailing").unwrap();
+        let cfg = HostsConfig {
+            entries: vec!["regexp:^[a-z#]+\\.example$ 192.0.2.1".to_string()],
+            files: vec![file.path().display().to_string()],
+            short_circuit: false,
+        };
+        let index = build_rule_index(&cfg).expect("inline regexp should build");
+
+        assert!(index.match_answers("abc.example").is_some());
+        assert!(index.match_answers("a#b.example").is_some());
+        assert!(index.match_answers("file.example").is_some());
     }
 
     fn make_context(name: &str, qtype: RecordType) -> DnsContext {

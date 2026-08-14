@@ -25,7 +25,7 @@ use serde_yaml_ng::Value;
 use crate::config::types::PluginConfig;
 use crate::core::context::DnsContext;
 use crate::infra::error::{DnsError, Result};
-use crate::infra::io::{LineClassifier, TextSource};
+use crate::infra::io::{LineClassifier, TextLocation, TextSource};
 use crate::plugin::executor::{ExecStep, Executor, ExecutorNext};
 use crate::plugin::{Plugin, PluginFactory, UninitializedPlugin};
 use crate::proto::{CNAME, DNSClass, Name, Question, RData, Record};
@@ -208,14 +208,17 @@ fn build_rules(cfg: &RedirectConfig) -> Result<(Vec<Name>, RuleIndex)> {
         .scan(
             &LineClassifier::new(&["#"]),
             |line| -> std::result::Result<(), String> {
-                if line.annotations().blank || line.annotations().leading_comment.is_some() {
-                    return Ok(());
-                }
-                let raw = line.raw();
-                let rule_text = raw.split_once('#').map_or(raw, |(left, _)| left).trim();
-                if rule_text.is_empty() {
-                    return Ok(());
-                }
+                let rule_text = match line.location() {
+                    TextLocation::Inline { .. } => line.raw().trim(),
+                    TextLocation::File { .. } => {
+                        if line.annotations().blank || line.annotations().leading_comment.is_some()
+                        {
+                            return Ok(());
+                        }
+                        let raw = line.raw();
+                        raw.split_once('#').map_or(raw, |(left, _)| left).trim()
+                    }
+                };
                 let rule = parse_redirect_rule(rule_text)
                     .map_err(|error| format!("invalid redirect rule '{rule_text}': {error}"))?;
                 builder.add_rule(rule);
@@ -398,6 +401,25 @@ mod tests {
     fn test_parse_redirect_rule_validation() {
         assert!(parse_redirect_rule("bad_rule").is_err());
         assert!(parse_redirect_rule("full:example.com target.example.com").is_ok());
+    }
+
+    #[test]
+    fn inline_regexp_preserves_hash_while_file_comments_are_stripped() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "# ignored").unwrap();
+        writeln!(file, "full:file.test file-target.example # trailing").unwrap();
+        let cfg = RedirectConfig {
+            rules: vec!["regexp:^[a-z#]+\\.example$ target.example".to_string()],
+            files: vec![file.path().display().to_string()],
+        };
+        let (targets, index) = build_rules(&cfg).expect("inline regexp should build");
+
+        assert!(index.match_target(&targets, "abc.example").is_some());
+        assert!(index.match_target(&targets, "a#b.example").is_some());
+        assert_eq!(
+            index.match_target(&targets, "file.test").unwrap().to_fqdn(),
+            "file-target.example."
+        );
     }
 
     fn make_context(name: &str) -> DnsContext {

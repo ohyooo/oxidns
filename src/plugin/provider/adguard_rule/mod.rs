@@ -406,6 +406,25 @@ mod tests {
     }
 
     #[test]
+    fn rejects_supported_modifiers_without_a_rule_pattern() {
+        for rule in [
+            "$important",
+            "$badfilter",
+            "$dnstype=A",
+            "$denyallow=example.org",
+            "$script,important",
+        ] {
+            let error = parse_line(rule, None).unwrap_err();
+            assert_eq!(error, "empty rule pattern", "rule: {rule}");
+        }
+
+        assert!(matches!(
+            parse_line("$script,third-party", None).unwrap(),
+            ParsedLine::Skipped(SkipReason::UnsupportedModifier)
+        ));
+    }
+
+    #[test]
     fn large_file_builds_with_streaming_visitor() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("large.txt");

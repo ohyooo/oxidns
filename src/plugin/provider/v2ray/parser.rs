@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use prost::Message;
 
 use super::model::{Cidr, Domain, DomainType, GeoIp, GeoIpList, GeoSite, GeoSiteList, attribute};
+use crate::infra::io::FingerprintReader;
 
 const MAX_PROTOBUF_GROUP_DEPTH: usize = 100;
 
@@ -112,21 +113,19 @@ pub(crate) fn parse_geoip_dat(data: &[u8]) -> Result<GeoIpList, String> {
 pub(crate) struct DatFileSession {
     path: PathBuf,
     file: File,
-    file_len: u64,
+    fingerprint: Option<[u8; 32]>,
 }
 
 impl DatFileSession {
     pub(crate) fn open(path: &Path) -> Result<Self, String> {
         let file = File::open(path)
             .map_err(|error| format!("failed to open '{}': {error}", path.display()))?;
-        let file_len = file
-            .metadata()
-            .map_err(|error| format!("failed to inspect '{}': {error}", path.display()))?
-            .len();
+        file.metadata()
+            .map_err(|error| format!("failed to inspect '{}': {error}", path.display()))?;
         Ok(Self {
             path: path.to_path_buf(),
             file,
-            file_len,
+            fingerprint: None,
         })
     }
 
@@ -149,16 +148,62 @@ impl DatFileSession {
         M: Message + Default,
         F: FnMut(M) -> Result<(), String>,
     {
+        let file_len = self
+            .file
+            .metadata()
+            .map_err(|error| format!("failed to inspect '{}': {error}", self.path.display()))?
+            .len();
         self.file
             .rewind()
             .map_err(|error| format!("failed to rewind '{}': {error}", self.path.display()))?;
-        let mut reader = BufReader::with_capacity(256 * 1024, &mut self.file);
-        visit_top_level_entries::<M, _>(&mut reader, self.file_len, on_entry)
+        let hashing_reader = FingerprintReader::new(&mut self.file);
+        let buffered_reader = BufReader::with_capacity(256 * 1024, hashing_reader);
+        let mut reader = ReadCursor::new(buffered_reader);
+        visit_top_level_entries::<M, _>(&mut reader, file_len, on_entry)?;
+        let fingerprint = reader.into_inner().into_inner().finish();
+        if let Some(expected) = self.fingerprint {
+            if expected != fingerprint {
+                return Err(format!(
+                    "protobuf source '{}' changed between replay scans",
+                    self.path.display()
+                ));
+            }
+        } else {
+            self.fingerprint = Some(fingerprint);
+        }
+        Ok(())
+    }
+}
+
+struct ReadCursor<R> {
+    inner: R,
+    position: u64,
+}
+
+impl<R> ReadCursor<R> {
+    fn new(inner: R) -> Self {
+        Self { inner, position: 0 }
+    }
+
+    fn position(&self) -> u64 {
+        self.position
+    }
+
+    fn into_inner(self) -> R {
+        self.inner
+    }
+}
+
+impl<R: Read> Read for ReadCursor<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buffer)?;
+        self.position += read as u64;
+        Ok(read)
     }
 }
 
 fn visit_top_level_entries<M, F>(
-    reader: &mut (impl Read + Seek),
+    reader: &mut ReadCursor<impl Read>,
     file_len: u64,
     mut on_entry: F,
 ) -> Result<(), String>
@@ -180,9 +225,7 @@ where
                 ));
             }
             let encoded_len = read_required_varint(reader)?;
-            let position = reader
-                .stream_position()
-                .map_err(|error| format!("failed to locate protobuf entry: {error}"))?;
+            let position = reader.position();
             if encoded_len > file_len.saturating_sub(position) {
                 return Err(format!(
                     "truncated protobuf entry payload: declared {encoded_len} bytes, only {} remain",
@@ -349,6 +392,23 @@ mod streaming_tests {
         DatFileSession::open(path)?.visit_geosite(on_entry)
     }
 
+    fn encoded_site(code: &str) -> Vec<u8> {
+        GeoSiteList {
+            entry: vec![GeoSite {
+                country_code: code.to_string(),
+                domain: vec![Domain {
+                    r#type: DomainType::RootDomain as i32,
+                    value: format!("{code}.example"),
+                    attribute: Vec::new(),
+                }],
+                resource_hash: Vec::new(),
+                code: String::new(),
+                file_path: String::new(),
+            }],
+        }
+        .encode_to_vec()
+    }
+
     #[test]
     fn streams_entries_and_skips_unknown_top_level_fields() {
         let list = GeoSiteList {
@@ -391,23 +451,6 @@ mod streaming_tests {
 
     #[test]
     fn dat_session_replays_opened_snapshot_after_path_replacement() {
-        fn encoded_site(code: &str) -> Vec<u8> {
-            GeoSiteList {
-                entry: vec![GeoSite {
-                    country_code: code.to_string(),
-                    domain: vec![Domain {
-                        r#type: DomainType::RootDomain as i32,
-                        value: format!("{code}.example"),
-                        attribute: Vec::new(),
-                    }],
-                    resource_hash: Vec::new(),
-                    code: String::new(),
-                    file_path: String::new(),
-                }],
-            }
-            .encode_to_vec()
-        }
-
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("geosite.dat");
         let replacement = dir.path().join("replacement.dat");
@@ -435,6 +478,20 @@ mod streaming_tests {
 
         assert_eq!(first, vec!["OLD"]);
         assert_eq!(replayed, first);
+    }
+
+    #[test]
+    fn dat_session_rejects_in_place_changes_between_visits() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("geosite.dat");
+        std::fs::write(&path, encoded_site("OLD")).unwrap();
+        let mut session = DatFileSession::open(&path).unwrap();
+
+        session.visit_geosite(|_| Ok(())).unwrap();
+        std::fs::write(&path, encoded_site("NEW")).unwrap();
+
+        let error = session.visit_geosite(|_| Ok(())).unwrap_err();
+        assert!(error.contains("changed between replay scans"));
     }
 
     #[test]

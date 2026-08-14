@@ -10,10 +10,10 @@
 
 use std::fmt::{Display, Formatter};
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, Read, Seek};
+use std::io::{self, BufRead, BufReader, Seek};
 use std::path::PathBuf;
 
-use sha2::{Digest, Sha256};
+use super::FingerprintReader;
 
 const TEXT_READER_CAPACITY: usize = 256 * 1024;
 
@@ -60,6 +60,7 @@ impl<'a> TextSource<'a> {
                 opened.push(OpenTextFile {
                     path,
                     file: open_file(path)?,
+                    fingerprint: None,
                 });
             }
             ReplayFiles::Opened(opened)
@@ -136,10 +137,15 @@ enum ReplayFiles<'a> {
 struct OpenTextFile<'a> {
     path: &'a str,
     file: File,
+    fingerprint: Option<[u8; 32]>,
 }
 
 impl TextSourceSession<'_> {
     /// Replay inline values and files from their beginnings.
+    ///
+    /// Content changes are reported after the affected file has been visited.
+    /// Consumers must therefore write only into an unpublished candidate that
+    /// can be discarded when this method returns an error.
     #[allow(dead_code)]
     pub(crate) fn scan<E, F>(
         &mut self,
@@ -160,8 +166,8 @@ impl TextSourceSession<'_> {
                         line: 1,
                         source,
                     })?;
-                    let mut reader =
-                        BufReader::with_capacity(TEXT_READER_CAPACITY, &mut opened.file);
+                    let hashing_reader = FingerprintReader::new(&mut opened.file);
+                    let mut reader = BufReader::with_capacity(TEXT_READER_CAPACITY, hashing_reader);
                     visit_reader(
                         &mut reader,
                         opened.path,
@@ -169,6 +175,16 @@ impl TextSourceSession<'_> {
                         &mut buffer,
                         &mut visitor,
                     )?;
+                    let fingerprint = reader.into_inner().finish();
+                    if let Some(expected) = opened.fingerprint {
+                        if expected != fingerprint {
+                            return Err(TextScanError::Changed {
+                                path: PathBuf::from(opened.path),
+                            });
+                        }
+                    } else {
+                        opened.fingerprint = Some(fingerprint);
+                    }
                 }
             }
             ReplayFiles::Verified {
@@ -208,32 +224,6 @@ fn open_file<E>(path: &str) -> Result<File, TextScanError<E>> {
         path: PathBuf::from(path),
         source,
     })
-}
-
-struct FingerprintReader<R> {
-    inner: R,
-    hasher: Sha256,
-}
-
-impl<R> FingerprintReader<R> {
-    fn new(inner: R) -> Self {
-        Self {
-            inner,
-            hasher: Sha256::new(),
-        }
-    }
-
-    fn finish(self) -> [u8; 32] {
-        self.hasher.finalize().into()
-    }
-}
-
-impl<R: Read> Read for FingerprintReader<R> {
-    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        let read = self.inner.read(buffer)?;
-        self.hasher.update(&buffer[..read]);
-        Ok(read)
-    }
 }
 
 fn visit_inline<E, F>(
@@ -618,6 +608,26 @@ mod tests {
             })
             .unwrap();
         assert_eq!(reopened, vec!["new"]);
+    }
+
+    #[test]
+    fn replay_session_rejects_in_place_single_file_changes() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("rules.txt");
+        std::fs::write(&path, "old\n").unwrap();
+        let files = vec![path.display().to_string()];
+        let source = TextSource::new("rules", &[], &files);
+        let mut session = source.open_replay().unwrap();
+
+        session
+            .scan(&LineClassifier::default(), |_| Ok::<_, String>(()))
+            .unwrap();
+        std::fs::write(&path, "new\n").unwrap();
+
+        let error = session
+            .scan(&LineClassifier::default(), |_| Ok::<_, String>(()))
+            .unwrap_err();
+        assert!(matches!(error, TextScanError::Changed { path: changed } if changed == path));
     }
 
     #[test]

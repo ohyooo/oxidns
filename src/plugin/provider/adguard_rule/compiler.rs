@@ -149,6 +149,9 @@ pub(super) fn build_rule_buckets(
     CompiledRuleSet,
     BuildStats,
 )> {
+    // Sources without badfilter need one planning scan and one compilation
+    // scan. A non-empty global badfilter set adds an active-capacity scan so
+    // disabled rules do not leave proportional allocations in the snapshot.
     let source = TextSource::new("args.rules", &cfg.rules, &cfg.files);
     let classifier = LineClassifier::new(&["!", "#"]);
     let mut session = source.open_replay().map_err(|error| {

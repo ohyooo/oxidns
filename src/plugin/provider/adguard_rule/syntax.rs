@@ -74,6 +74,31 @@ pub(super) enum ParsedLine<'a> {
     Rule(RuleMeta<'a>),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModifierKind {
+    Important,
+    Badfilter,
+    Denyallow,
+    Dnstype,
+    Unsupported,
+    Unknown,
+}
+
+impl ModifierKind {
+    fn is_supported(self) -> bool {
+        matches!(
+            self,
+            Self::Important | Self::Badfilter | Self::Denyallow | Self::Dnstype
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ModifierToken<'a> {
+    kind: ModifierKind,
+    value: Option<&'a str>,
+}
+
 /// Parse one physical line without performing I/O or logging.
 ///
 /// `leading_comment` is a lexical annotation supplied by the text source. It
@@ -107,6 +132,9 @@ pub(super) fn parse_line<'a>(
     };
     let pattern = pattern.trim();
     if pattern.is_empty() {
+        if modifiers.is_some_and(has_supported_modifier) {
+            return Err("empty rule pattern".to_string());
+        }
         if modifiers.is_some() {
             return Ok(ParsedLine::Skipped(SkipReason::UnsupportedModifier));
         }
@@ -135,33 +163,67 @@ pub(super) fn parse_line<'a>(
             .map(str::trim)
             .filter(|modifier| !modifier.is_empty())
         {
-            let (name, value) = modifier
-                .split_once('=')
-                .map(|(name, value)| (name.trim(), Some(value.trim())))
-                .unwrap_or((modifier, None));
-
-            if name.eq_ignore_ascii_case("important") {
-                meta.important = true;
-            } else if name.eq_ignore_ascii_case("badfilter") {
-                meta.badfilter = true;
-            } else if name.eq_ignore_ascii_case("denyallow") {
-                meta.denyallow =
-                    Some(value.ok_or_else(|| "denyallow modifier requires a value".to_string())?);
-            } else if name.eq_ignore_ascii_case("dnstype") {
-                meta.dnstype =
-                    Some(value.ok_or_else(|| "dnstype modifier requires a value".to_string())?);
-            } else if name.eq_ignore_ascii_case("dnsrewrite")
-                || name.eq_ignore_ascii_case("client")
-                || name.eq_ignore_ascii_case("ctag")
-            {
-                return Ok(ParsedLine::Skipped(SkipReason::UnsupportedModifier));
-            } else {
-                return Ok(ParsedLine::Skipped(SkipReason::UnknownModifier));
+            let token = parse_modifier_token(modifier);
+            match token.kind {
+                ModifierKind::Important => meta.important = true,
+                ModifierKind::Badfilter => meta.badfilter = true,
+                ModifierKind::Denyallow => {
+                    meta.denyallow = Some(
+                        token
+                            .value
+                            .ok_or_else(|| "denyallow modifier requires a value".to_string())?,
+                    );
+                }
+                ModifierKind::Dnstype => {
+                    meta.dnstype = Some(
+                        token
+                            .value
+                            .ok_or_else(|| "dnstype modifier requires a value".to_string())?,
+                    );
+                }
+                ModifierKind::Unsupported => {
+                    return Ok(ParsedLine::Skipped(SkipReason::UnsupportedModifier));
+                }
+                ModifierKind::Unknown => {
+                    return Ok(ParsedLine::Skipped(SkipReason::UnknownModifier));
+                }
             }
         }
     }
 
     Ok(ParsedLine::Rule(meta))
+}
+
+fn has_supported_modifier(modifiers: &str) -> bool {
+    modifiers
+        .split(',')
+        .map(str::trim)
+        .filter(|modifier| !modifier.is_empty())
+        .any(|modifier| parse_modifier_token(modifier).kind.is_supported())
+}
+
+fn parse_modifier_token(raw: &str) -> ModifierToken<'_> {
+    let (name, value) = raw
+        .split_once('=')
+        .map(|(name, value)| (name.trim(), Some(value.trim())))
+        .unwrap_or((raw, None));
+    let kind = if name.eq_ignore_ascii_case("important") {
+        ModifierKind::Important
+    } else if name.eq_ignore_ascii_case("badfilter") {
+        ModifierKind::Badfilter
+    } else if name.eq_ignore_ascii_case("denyallow") {
+        ModifierKind::Denyallow
+    } else if name.eq_ignore_ascii_case("dnstype") {
+        ModifierKind::Dnstype
+    } else if name.eq_ignore_ascii_case("dnsrewrite")
+        || name.eq_ignore_ascii_case("client")
+        || name.eq_ignore_ascii_case("ctag")
+    {
+        ModifierKind::Unsupported
+    } else {
+        ModifierKind::Unknown
+    };
+    ModifierToken { kind, value }
 }
 
 /// Split a DNS pattern from its modifiers. A leading slash denotes a regular

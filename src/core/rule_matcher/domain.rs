@@ -166,6 +166,11 @@ impl FullDomainMatcher {
     }
 
     #[inline]
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.rules.shrink_to_fit();
+    }
+
+    #[inline]
     pub(crate) fn add_rule(&mut self, rule: &str) {
         self.rules.insert(rule.to_owned().into_boxed_str());
     }
@@ -470,6 +475,12 @@ impl DomainRuleMatcher {
     /// should finalize once after loading and before the matcher is placed
     /// on the request path.
     pub fn finalize(&mut self) -> Result<(), String> {
+        if let Some(full) = &mut self.full {
+            // Capacity planning counts source rules, while the set collapses
+            // duplicates. Release any resulting over-reservation before the
+            // immutable matcher is published.
+            full.shrink_to_fit();
+        }
         if let Some(keyword) = &mut self.keyword {
             keyword.finalize()?;
         }
@@ -599,6 +610,24 @@ mod tests {
         assert!(matcher.is_match_name(&Name::from_ascii("a.b.example.com").unwrap()));
         assert!(matcher.is_match_name(&Name::from_ascii("host.internal").unwrap()));
         assert!(!matcher.is_match_name(&Name::root()));
+    }
+
+    #[test]
+    fn finalize_releases_full_rule_capacity_reserved_for_duplicates() {
+        let mut matcher = DomainRuleMatcher::default();
+        matcher.reserve_rules(4096, 0, 0);
+        for _ in 0..4096 {
+            matcher
+                .add_rule(DomainRuleKind::Full, "example.com", "test")
+                .unwrap();
+        }
+        let reserved = matcher.full.as_ref().unwrap().rules.capacity();
+
+        matcher.finalize().unwrap();
+
+        let compacted = matcher.full.as_ref().unwrap().rules.capacity();
+        assert_eq!(matcher.full_rule_count(), 1);
+        assert!(compacted < reserved);
     }
 
     #[test]

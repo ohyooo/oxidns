@@ -28,6 +28,10 @@ use crate::infra::error::{DnsError, Result as DnsResult};
 /// Snapshot owners intentionally perform publication themselves after this
 /// helper succeeds, so cancellation, panic, and build failure all leave the
 /// currently published state untouched.
+///
+/// Dropping this future does not stop an already-running blocking closure.
+/// Repeatable callers must therefore run it under a lifecycle task or permit
+/// that remains owned until the closure exits.
 #[allow(dead_code)]
 pub(crate) async fn spawn_blocking_result<T, F>(task_name: &str, task: F) -> DnsResult<T>
 where
@@ -45,6 +49,10 @@ where
 /// construction happens on the child thread, so allocator thread-local caches
 /// are released when that thread exits. Callers still publish snapshots only
 /// after this helper succeeds.
+///
+/// Dropping this future cannot cancel the OS thread. Provider reloads and
+/// runtime initialization keep their serialization ownership in detached
+/// lifecycle tasks until this function returns.
 pub(crate) async fn spawn_isolated_build<T, F>(task_name: &str, task: F) -> DnsResult<T>
 where
     T: Send + 'static,

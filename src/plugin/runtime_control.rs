@@ -16,3 +16,13 @@ pub(crate) enum PluginRuntimeControl {
     Matcher(Arc<MatcherRuntimeControl>),
     Provider(Arc<ProviderRuntimeControl>),
 }
+
+impl PluginRuntimeControl {
+    pub(crate) async fn drain(&self) {
+        match self {
+            #[cfg(feature = "api")]
+            Self::Matcher(_) => {}
+            Self::Provider(control) => control.drain().await,
+        }
+    }
+}
