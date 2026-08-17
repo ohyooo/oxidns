@@ -313,9 +313,9 @@ export const enUSPluginDefined = {
         "args[].exec": {
           label: "perform action",
           description:
-            "Defines the action to perform when the rule matches. You can reference an executor or use built-in actions such as accept, return, reject, jump, goto, and mark; reject accepts case-insensitive RCODE names and numeric values.",
+            "Defines the action to perform when the rule matches. You can reference an executor or use built-in actions such as accept, return, reject, jump, goto, mark, and set_mark. mark appends values, while set_mark replaces the complete mark set; reject accepts case-insensitive RCODE names and numeric values.",
           placeholder:
-            "$forward_main / accept / reject SERVFAIL / reject NOERROR / reject 3 / jump seq_tag",
+            "$forward_main / accept / reject SERVFAIL / mark 1,2 / set_mark 2,3 / jump seq_tag",
         },
       },
     },

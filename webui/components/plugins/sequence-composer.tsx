@@ -65,7 +65,14 @@ import { useI18n } from "@/lib/i18n/provider";
 
 type ConditionMode = "reference" | "quick_setup" | "text";
 type ActionMode = "reference" | "quick_setup" | "control" | "text";
-type ControlKind = "accept" | "return" | "reject" | "mark" | "jump" | "goto";
+type ControlKind =
+  | "accept"
+  | "return"
+  | "reject"
+  | "mark"
+  | "set_mark"
+  | "jump"
+  | "goto";
 
 type SequenceFlowNode =
   | Node<RuleNodeData, "rule">
@@ -155,6 +162,7 @@ const controlLabels: Record<ControlKind, string> = {
   return: "return",
   reject: "reject",
   mark: "mark",
+  set_mark: "set_mark",
   jump: "jump",
   goto: "goto",
 };
@@ -164,6 +172,7 @@ const builtinControls: ControlKind[] = [
   "return",
   "reject",
   "mark",
+  "set_mark",
   "jump",
   "goto",
 ];

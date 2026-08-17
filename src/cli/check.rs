@@ -203,6 +203,28 @@ plugins:
     }
 
     #[test]
+    fn print_dependency_graph_renders_set_mark_as_builtin_without_dependencies() {
+        let summary = config::validate_text(
+            r#"
+plugins:
+  - tag: seq
+    type: sequence
+    args:
+      - exec: set_mark 2,3
+  - tag: udp_server
+    type: udp_server
+    args:
+      entry: seq
+"#,
+        )
+        .expect("config should validate");
+
+        let graph = render_dependency_graph(&summary);
+        assert!(graph.contains("THEN set_mark 2,3 [args[0].exec]"));
+        assert!(!graph.contains("quick_setup(set_mark)"));
+    }
+
+    #[test]
     fn print_dependency_graph_shows_quick_setup_provider_deps_under_rule() {
         let summary = config::validate_text(
             r#"

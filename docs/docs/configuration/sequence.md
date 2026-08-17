@@ -191,13 +191,35 @@ title: 执行链与控制流
 
 ### `mark ...`
 
-- 向 `DnsContext.marks` 写入一个或多个无符号整数 mark。
+- 向 `DnsContext.marks` 追加一个或多个无符号整数 mark，保留集合中已有的值。
 - 支持写法：
   - `mark 1`
   - `mark 1 2 3`
   - `mark 1,2,3`
 - 写入后会继续执行当前 `sequence` 的下一条规则。
 - 它本身不会生成响应，也不会终止当前 `sequence`。
+
+### `set_mark ...`
+
+- 用一个或多个无符号整数完整替换 `DnsContext.marks`，不会保留集合中原有的值。
+- 参数语法与 `mark` 一致：
+  - `set_mark 1`
+  - `set_mark 1 2 3`
+  - `set_mark 1,2,3`
+- 重复值会自动去重；mark 是集合，配置顺序没有运行时语义。
+- 至少需要一个值。缺少参数、负数、非数字或超出 `u32` 范围的值会导致 sequence 初始化失败。
+- 替换后会继续执行当前 `sequence` 的下一条规则，不生成响应，也不终止当前 `sequence`。
+- `set_mark` 替换整个集合，不区分“分类 mark”和“附加 mark”。如果需要保留某个值，必须把它明确写进新集合。
+
+例如：
+
+```yaml
+- exec: "mark 1,4"
+- exec: "set_mark 2,3"
+- exec: "mark 5"
+```
+
+最终 marks 为 `2,3,5`：`set_mark` 移除了已有的 `1,4`，后续 `mark` 再追加 `5`。
 
 ### `jump seq_tag`
 
@@ -233,7 +255,7 @@ title: 执行链与控制流
 - tag: child_seq
   type: sequence
   args:
-    - exec: "mark 2"
+    - exec: "set_mark 2,20"
     - exec: "return"
 
 - tag: parent_jump
@@ -251,5 +273,5 @@ title: 执行链与控制流
     - exec: "mark 3"
 ```
 
-- `parent_jump` 最终会留下 `1,2,3`，因为 `jump` 调用结束后会继续执行下一条。
-- `parent_goto` 最终只会留下 `1,2`，因为控制权不会回到 `goto` 之后。
+- `parent_jump` 最终会留下 `2,3,20`：子 sequence 与调用方共享同一个 `DnsContext`，因此 `set_mark` 会替换调用方先前写入的 `1`，随后父 sequence 继续追加 `3`。
+- `parent_goto` 最终只会留下 `2,20`，因为 `set_mark` 同样替换了 `1`，且控制权不会回到 `goto` 之后。
