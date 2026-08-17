@@ -191,13 +191,35 @@ Besides calling plugins, `sequence.args[].exec` can also use built-in control fl
 
 ### `mark ...`
 
-- Inserts one or more unsigned integer marks into `DnsContext.marks`.
+- Appends one or more unsigned integer marks to `DnsContext.marks` while preserving existing values.
 - Supported forms:
   - `mark 1`
   - `mark 1 2 3`
   - `mark 1,2,3`
 - Continues to the next rule in the current `sequence`.
 - Does not build a response and does not terminate the current `sequence`.
+
+### `set_mark ...`
+
+- Replaces the complete `DnsContext.marks` collection with one or more unsigned integer marks; existing values are not preserved.
+- It accepts the same argument forms as `mark`:
+  - `set_mark 1`
+  - `set_mark 1 2 3`
+  - `set_mark 1,2,3`
+- Duplicate values are deduplicated. Marks form a set, so configuration order has no runtime meaning.
+- At least one value is required. Missing arguments, negative values, non-numeric values, and values outside the `u32` range cause sequence initialization to fail.
+- Continues to the next rule without building a response or terminating the current `sequence`.
+- `set_mark` replaces the entire collection; it does not distinguish classification marks from supplemental marks. Values that must be retained need to be included explicitly.
+
+For example:
+
+```yaml
+- exec: "mark 1,4"
+- exec: "set_mark 2,3"
+- exec: "mark 5"
+```
+
+The final marks are `2,3,5`: `set_mark` removes the existing `1,4`, then the following `mark` appends `5`.
 
 ### `jump seq_tag`
 
@@ -233,7 +255,7 @@ Example showing the difference between `jump` and `goto`:
 - tag: child_seq
   type: sequence
   args:
-    - exec: "mark 2"
+    - exec: "set_mark 2,20"
     - exec: "return"
 
 - tag: parent_jump
@@ -251,5 +273,5 @@ Example showing the difference between `jump` and `goto`:
     - exec: "mark 3"
 ```
 
-- `parent_jump` ends with marks `1,2,3` because execution resumes after `jump`.
-- `parent_goto` ends with marks `1,2` because execution never returns after `goto`.
+- `parent_jump` ends with marks `2,3,20`: the child and caller share the same `DnsContext`, so `set_mark` replaces the caller's earlier `1`, and the parent appends `3` after the child returns.
+- `parent_goto` ends with marks `2,20` because `set_mark` also replaces `1` and execution never returns after `goto`.

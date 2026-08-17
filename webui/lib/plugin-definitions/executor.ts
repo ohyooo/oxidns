@@ -54,11 +54,11 @@ export const executorPluginDefinitions: PluginKindDefinition[] = [
             {
               key: "exec",
               description:
-                "定义规则命中后要执行的动作，可引用执行器或使用 accept、return、reject、jump、goto、mark 等内置动作；reject 支持大小写不敏感的 RCODE 名称和数字。",
+                "定义规则命中后要执行的动作，可引用执行器或使用 accept、return、reject、jump、goto、mark、set_mark 等内置动作；mark 追加标记，set_mark 完整替换标记集合；reject 支持大小写不敏感的 RCODE 名称和数字。",
               label: "执行动作",
               type: "text",
               placeholder:
-                "$forward_main / accept / reject SERVFAIL / reject NOERROR / reject 3 / jump seq_tag",
+                "$forward_main / accept / reject SERVFAIL / mark 1,2 / set_mark 2,3 / jump seq_tag",
             },
           ],
         },

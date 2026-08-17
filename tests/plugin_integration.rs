@@ -1253,6 +1253,76 @@ plugins:
 }
 
 #[tokio::test]
+async fn test_sequence_set_mark_replaces_multiple_marks_across_jump() -> Result<()> {
+    let yaml = r#"
+log:
+  level: info
+plugins:
+  - tag: child
+    type: sequence
+    args:
+      - exec: set_mark 2,3
+      - exec: return
+  - tag: parent
+    type: sequence
+    args:
+      - exec: mark 1 4
+      - exec: jump child
+      - exec: mark 5
+"#;
+
+    let config = parse_config(yaml)?;
+    let registry = plugin::init(config).await?;
+    let sequence = registry
+        .get_plugin("parent")
+        .expect("parent sequence should exist")
+        .to_executor();
+    let mut context = make_context(registry.clone(), "example.com.");
+
+    let step = sequence.execute(&mut context).await?;
+
+    assert!(matches!(step, ExecStep::Next));
+    assert_eq!(context.marks().len(), 3);
+    assert!(context.marks().contains(&2));
+    assert!(context.marks().contains(&3));
+    assert!(context.marks().contains(&5));
+    assert!(!context.marks().contains(&1));
+    assert!(!context.marks().contains(&4));
+
+    registry.destroy().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_sequence_set_mark_rejects_invalid_values_during_init() -> Result<()> {
+    for exec in [
+        "set_mark",
+        "set_mark -1",
+        "set_mark abc",
+        "set_mark 4294967296",
+    ] {
+        let yaml = format!(
+            r#"
+log:
+  level: info
+plugins:
+  - tag: seq
+    type: sequence
+    args:
+      - exec: "{exec}"
+"#
+        );
+        let config = parse_config(&yaml)?;
+        let err = plugin::init(config)
+            .await
+            .expect_err("invalid set_mark value should fail sequence initialization");
+        assert!(err.to_string().contains("set_mark"));
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_sequence_quick_setup_matchers_accept_enum_text() -> Result<()> {
     let yaml = r#"
 log:
