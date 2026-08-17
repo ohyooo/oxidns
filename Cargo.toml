@@ -118,18 +118,12 @@ regex = "1.12.2"
 # Executor plugin dependencies, each gated by its own feature.
 cronexpr = { version = "1.5.0", optional = true }
 fast-socks5 = "1.0.0"
-mikrotik-rs = { version = "0.8.0", optional = true }
+mikrotik-rs = { package = "oxidns-mikrotik-rs", version = "0.8.1", optional = true }
 rusqlite = { version = "0.40.1", features = ["bundled"], optional = true }
 zoneparser = { package = "oxidns-zoneparser", version = "0.1.1", path = "crates/zoneparser", optional = true }
 
 # Service management
 service-manager = "0.11.0"
-
-# Use the forked Tokio transport until the response-channel fix is released
-# upstream. Release publication skips Cargo's build verification temporarily.
-[patch.crates-io]
-mikrotik-proto = { git = "https://github.com/svenshi/mikrotik-rs.git", branch = "fix/tokio-unbounded-response-channel", package = "mikrotik-proto" }
-mikrotik-tokio = { git = "https://github.com/svenshi/mikrotik-rs.git", branch = "fix/tokio-unbounded-response-channel", package = "mikrotik-tokio" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ripset = { package = "oxidns-ripset", version = "0.1.2", path = "crates/ripset", optional = true }
@@ -167,8 +161,8 @@ default = ["full"]
 
 # Minimal core DNS forwarder: UDP + TCP listeners, UDP + TCP upstream,
 # sequence / forward / cache / fallback / hosts / redirect / dual_selector /
-# ecs_handler / ttl / drop_resp / black_hole / debug_print / reload, all
-# matchers, and the `domain_set` + `ip_set` providers.
+# ecs_handler / ttl / drop_resp / black_hole / debug_print / reload, all matchers,
+# and the `domain_set` + `ip_set` providers.
 # Nothing else is compiled. No hyper / rustls / quinn / h2 / h3 / zoneparser.
 minimal = []
 
@@ -190,6 +184,7 @@ standard = [
     "upstream-doq",
     "provider-protobuf",
     "provider-adguard-rule",
+    "plugin-client-ip-from-ecs",
     "plugin-arbitrary",
     "plugin-response",
     "plugin-cron",
@@ -301,6 +296,9 @@ plugin-ip-selector = []
 
 # `script` executor (run an external command per request).
 plugin-script = []
+
+# `client_ip_from_ecs` executor (replace the request-local client IP from ECS).
+plugin-client-ip-from-ecs = []
 
 # `arbitrary` executor (zone-style static DNS records).
 plugin-arbitrary = ["dep:zoneparser"]

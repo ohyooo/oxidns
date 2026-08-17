@@ -56,7 +56,8 @@ hyper / rustls / quinn / h2 / h3 / sqlite / zoneparser,是体积最小的组合�
 - Provider:`domain_set`、`ip_set`
 - Matcher:全部
 - Executor:`sequence`、`forward`、`cache`、`fallback`、`hosts`、`redirect`、
-  `prefer_ipv4`、`prefer_ipv6`、`ecs_handler`、`ttl`、`drop_resp`、`black_hole`、
+  `prefer_ipv4`、`prefer_ipv6`、`ecs_handler`、`ttl`、
+  `drop_resp`、`black_hole`、
   `debug_print`、`reload`
 - 进程内 metric 计数器(不暴露 HTTP 端点)
 
@@ -77,7 +78,7 @@ hyper / rustls / quinn / h2 / h3 / sqlite / zoneparser,是体积最小的组合�
 - `network.outbound` resolver:DoT、DoH (HTTP/2)、DoQ nameserver
 - Provider:`geoip`、`geosite`、`v2ray_dat`、`adguard_rule`、
   `dynamic_domain_set`
-- Executor:`arbitrary`、`response`、`cron`、`download`、`http_request`、
+- Executor:`client_ip_from_ecs`、`arbitrary`、`response`、`cron`、`download`、`http_request`、
   `reverse_lookup`、`query_recorder`、`script`、`ip_selector`、
   `learn_domain`
 - `upgrade` CLI 子命令与 `upgrade` executor
@@ -160,6 +161,7 @@ upstream-dot`,而不是直接崩溃。
 | `plugin-dynamic-domain` | `dynamic_domain_set` provider + `learn_domain` executor | — |
 | `plugin-ip-selector` | `ip_selector` | — |
 | `plugin-script` | `script` | — |
+| `plugin-client-ip-from-ecs` | `client_ip_from_ecs` | — |
 | `plugin-arbitrary` | `arbitrary` | `oxidns-zoneparser` |
 | `plugin-response` | `response` | `oxidns-zoneparser` |
 | `plugin-download` | `download` | — |

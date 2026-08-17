@@ -34,9 +34,9 @@ dependencies = [
 
 [[package]]
 name = "aho-corasick"
-version = "1.1.4"
+version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddd31a130427c27518df266943a5308ed92d4b226cc639f5a8f1002816174301"
+checksum = "c982642fa9e8606056828ee9a8505737230110bb1099153c79efe865c59d12ba"
 dependencies = [
  "memchr",
 ]
@@ -303,9 +303,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.6.4"
+version = "4.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d91e0c145792ef73a6ad36d27c75ac09f1832222a3c209689d90f534685ee5b7"
+checksum = "473c7e07f409a8d772161724aa8db6a765a2532a70f9667eeb7b49d3d02fbdca"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -313,9 +313,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.6.2"
+version = "4.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f09628afdcc538b57f3c6341e9c8e9970f18e4a481690a64974d7023bd33548b"
+checksum = "7b48fea5a88e9ae728a2dcbedbfc0e730f7d60da42e1cb049a83c9fb8b789889"
 dependencies = [
  "anstream",
  "anstyle",
@@ -435,12 +435,11 @@ dependencies = [
 
 [[package]]
 name = "cronexpr"
-version = "1.5.0"
+version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a366517b317d398f448a2ba76c1b5000108db2ae393c865ec0ed6250dffdce32"
+checksum = "5eb9616333082debdf999b9247615938c2a5355409962ae691238c219fc3c343"
 dependencies = [
  "jiff",
- "winnow",
 ]
 
 [[package]]
@@ -1135,9 +1134,9 @@ dependencies = [
 
 [[package]]
 name = "http"
-version = "1.4.2"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6970f50e31d6fc17d3fa27329444bfa74e196cf62e95052a3f6fee181dba6425"
+checksum = "918d3568bebf352712bc2ef3d46a8bcf1a75b373be6539de198e9105cbbf9ce0"
 dependencies = [
  "bytes",
  "itoa",
@@ -1426,9 +1425,9 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jiff"
-version = "0.2.34"
+version = "0.2.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e184d09547b80eb7e20d141ba2fb1fbac843ca53f4cf1b31210adc4c1adc6e16"
+checksum = "668b7183bd07af9a4885f5c35b0cc5c83c4607a913c16b7e17291832910d2dcc"
 dependencies = [
  "defmt",
  "jiff-core",
@@ -1452,9 +1451,9 @@ dependencies = [
 
 [[package]]
 name = "jiff-static"
-version = "0.2.34"
+version = "0.2.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "323da076b7a6faf914dc677cb05a4b907742ff7375c8322c9e7f5061e5e0e9de"
+checksum = "3a69dcb3a21cfb32ce1cd056169337ca284af0766dd766e7878819b251a49204"
 dependencies = [
  "jiff-core",
  "proc-macro2",
@@ -1608,33 +1607,12 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 [[package]]
 name = "mikrotik-proto"
 version = "0.2.0"
-source = "git+https://github.com/svenshi/mikrotik-rs.git?branch=fix%2Ftokio-unbounded-response-channel#4b525bba941d136d80804d300159978f4434496d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4bfa65d096fee86dd1f27c579bc729d4fdb0b1bfee24e2fc71acd0a8349e836"
 dependencies = [
  "hashbrown 0.17.1",
  "thiserror 2.0.19",
  "uuid",
-]
-
-[[package]]
-name = "mikrotik-rs"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eee69e2a6bd3a789d1bf798286c6448c1cd689b66a28db565f86c3f193a0e6fe"
-dependencies = [
- "mikrotik-proto",
- "mikrotik-tokio",
-]
-
-[[package]]
-name = "mikrotik-tokio"
-version = "0.2.0"
-source = "git+https://github.com/svenshi/mikrotik-rs.git?branch=fix%2Ftokio-unbounded-response-channel#4b525bba941d136d80804d300159978f4434496d"
-dependencies = [
- "mikrotik-proto",
- "rustls",
- "thiserror 2.0.19",
- "tokio",
- "tokio-rustls",
 ]
 
 [[package]]
@@ -1761,8 +1739,8 @@ dependencies = [
  "jiff",
  "lazy_static",
  "libc",
- "mikrotik-rs",
  "oxidns-macros",
+ "oxidns-mikrotik-rs",
  "oxidns-proto",
  "oxidns-ripset",
  "oxidns-zoneparser",
@@ -1805,6 +1783,29 @@ version = "0.1.0"
 dependencies = [
  "quote",
  "syn 3.0.3",
+]
+
+[[package]]
+name = "oxidns-mikrotik-rs"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52f73213169f6b107890d2c603c3249ff0863be1ce33c2d3ac0e81722db349b1"
+dependencies = [
+ "mikrotik-proto",
+ "oxidns-mikrotik-tokio",
+]
+
+[[package]]
+name = "oxidns-mikrotik-tokio"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "367b0fae846fe8ee2a92f8f7f96cd0bf3159cea58e464b5aeb2f381b3c274663"
+dependencies = [
+ "mikrotik-proto",
+ "rustls",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]
@@ -2292,9 +2293,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.42"
+version = "0.23.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c54fcab019b409d04215d3a17cb438fd7fbf192ee61461f20f4fe18704bc138"
+checksum = "0283386ce02abc0151e1761d08802dfe86c173b0b494af5cbc086574e453da06"
 dependencies = [
  "log",
  "once_cell",
@@ -3406,15 +3407,6 @@ name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
-
-[[package]]
-name = "winnow"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
-dependencies = [
- "memchr",
-]
 
 [[package]]
 name = "wit-bindgen"

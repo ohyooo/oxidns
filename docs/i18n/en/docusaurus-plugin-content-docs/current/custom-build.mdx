@@ -62,7 +62,8 @@ optional plugins are dropped. The dependency closure excludes hyper / rustls
 - Providers: `domain_set`, `ip_set`
 - Matchers: all
 - Executors: `sequence`, `forward`, `cache`, `fallback`, `hosts`, `redirect`,
-  `prefer_ipv4`, `prefer_ipv6`, `ecs_handler`, `ttl`, `drop_resp`, `black_hole`,
+  `prefer_ipv4`, `prefer_ipv6`, `ecs_handler`, `ttl`,
+  `drop_resp`, `black_hole`,
   `debug_print`, `reload`
 - In-process metric counters (no HTTP endpoint)
 
@@ -84,7 +85,7 @@ of `minimal`.
 - `network.outbound` resolver: DoT, DoH (HTTP/2), and DoQ nameservers
 - Providers: `geoip`, `geosite`, `v2ray_dat`, `adguard_rule`,
   `dynamic_domain_set`
-- Executors: `arbitrary`, `response`, `cron`, `download`, `http_request`,
+- Executors: `client_ip_from_ecs`, `arbitrary`, `response`, `cron`, `download`, `http_request`,
   `reverse_lookup`, `query_recorder`, `script`, `ip_selector`, and
   `learn_domain`
 - `upgrade` CLI subcommand and `upgrade` executor
@@ -170,6 +171,7 @@ path.
 | `plugin-dynamic-domain` | `dynamic_domain_set` provider + `learn_domain` executor | — |
 | `plugin-ip-selector` | `ip_selector` | — |
 | `plugin-script` | `script` | — |
+| `plugin-client-ip-from-ecs` | `client_ip_from_ecs` | — |
 | `plugin-arbitrary` | `arbitrary` | `oxidns-zoneparser` |
 | `plugin-response` | `response` | `oxidns-zoneparser` |
 | `plugin-download` | `download` | — |

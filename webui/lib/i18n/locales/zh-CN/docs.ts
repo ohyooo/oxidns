@@ -162,6 +162,9 @@ export const zhCNDocs = {
     files:
       "- 类型：`array`；必填：否；默认值：空数组\n- 作用：指定外部重定向规则文件列表。\n- 文件格式与 `rules` 相同，每行一条；空行和 `#` 注释会被忽略。",
   },
+  client_ip_from_ecs: {
+    args: "- 类型：`array[string]`；必填：否；留空时运行时默认允许：`[127.0.0.1, ::1]`\n- 作用：定义允许提交 ECS 的原始客户端 IP 或 CIDR。\n- 安全：只有原始连接地址命中列表时才会采用 ECS；支持 IPv4、IPv6、单 IP 和 CIDR。",
+  },
   ecs_handler: {
     forward:
       "- 类型：`boolean`；必填：否；默认值：`false`\n- 作用：控制是否保留客户端请求中已有的 ECS。",
@@ -215,12 +218,16 @@ export const zhCNDocs = {
       "- 类型：`integer`；必填：否；默认值：`60`\n- 单位：秒\n- 作用：定义失败探测评分的保留时间。\n- 配置要求：启用缓存时必须大于 0。\n- 运行影响：失败缓存可避免不可达地址在短时间内被反复探测，同时允许较快恢复。",
   },
   prefer_ipv4: {
+    probe_executor:
+      "- 类型：`string`；必填：否；默认值：未配置（兼容 continuation 探针模式）\n- 作用：引用一个仅用于 preferred QTYPE 内部探针的 executor；填写不带 `$` 的普通 executor tag。\n- 运行影响：可引用 `forward`、`sequence` 或其他能够独立生成 DNS response 的 executor。探针上下文与外层隔离，探针路径的 marks、extensions 和执行路径不会提交外层。\n- 缓存限制：若探针结果依赖客户端、marks、随机、限流或其他请求级状态，应关闭 `cache`。",
     cache:
       "- 类型：`boolean`；必填：否；默认值：`true`\n- 作用：控制是否缓存 preferred 类型存在状态。",
     cache_ttl:
       "- 类型：`integer`；必填：否；默认值：`3600`\n- 单位：秒\n- 作用：定义 preferred 状态缓存时长。",
   },
   prefer_ipv6: {
+    probe_executor:
+      "- 类型：`string`；必填：否；默认值：未配置（兼容 continuation 探针模式）\n- 作用：引用一个仅用于 preferred QTYPE 内部探针的 executor；填写不带 `$` 的普通 executor tag。\n- 运行影响：可引用 `forward`、`sequence` 或其他能够独立生成 DNS response 的 executor。探针上下文与外层隔离，探针路径的 marks、extensions 和执行路径不会提交外层。\n- 缓存限制：若探针结果依赖客户端、marks、随机、限流或其他请求级状态，应关闭 `cache`。",
     cache:
       "- 类型：`boolean`；必填：否；默认值：`true`\n- 作用：控制是否缓存 preferred 类型存在状态。",
     cache_ttl:
@@ -370,48 +377,56 @@ export const zhCNDocs = {
   },
   ros_route: {
     address:
-      "- 类型：`string`；必填：是\n- RouterOS API 地址，通常为 `host:port`。",
-    username: "- 类型：`string`；必填：是\n- RouterOS API 登录用户名。",
-    password: "- 类型：`string`；必填：是\n- RouterOS API 登录密码。",
-    tls: "- 类型：`object`；默认：未启用\n- 启用 RouterOS API-SSL，通常连接 8729 端口。",
+      "- 类型：`string`；必填：是；默认值：无\n- 作用：指定 RouterOS API 服务地址，通常写为 `host:port`。明文 API 通常使用 `8728`，API-SSL 通常使用 `8729`，实际端口以设备配置为准。",
+    username:
+      "- 类型：`string`；必填：是；默认值：无\n- 作用：指定 RouterOS API 登录用户名。账户需要具备读取和维护目标路由表的权限；启用 `conntrack_guard` 时还需要读取 connection tracking。",
+    password:
+      "- 类型：`string`；必填：是；默认值：无\n- 作用：指定 RouterOS API 登录密码。插件初始化、重连和后台同步都依赖该凭据。\n- 注意事项：不要在公开仓库、日志或共享示例中暴露真实口令。",
+    tls: "- 类型：`object`；必填：否；默认值：无（明文 API）\n- 作用：启用 RouterOS API-SSL；通常应同时把 `address` 改为设备配置的 TLS 端口。",
     "tls.server_name":
-      "- 类型：`string`；默认：由连接地址推导\n- TLS 握手使用的服务器名称。",
-    "tls.ca": "- 类型：`string`；默认：系统信任库\n- 自定义 CA 证书文件路径。",
+      "- 类型：`string`；必填：否；默认值：由 `address` 推导\n- 作用：覆盖 TLS 握手和证书校验使用的服务器名称。使用 IP 地址或推导结果不符合证书名称时需要显式配置。",
+    "tls.ca":
+      "- 类型：`string`；必填：否；默认值：系统信任库\n- 作用：指定包含自签名证书或私有 CA 的 PEM 文件。\n- 约束：不能与 `tls.insecure: true` 同时配置。",
     "tls.insecure":
-      "- 类型：`bool`；默认：`false`\n- 跳过 TLS 证书验证；仅建议用于受控测试环境。",
+      "- 类型：`bool`；必填：否；默认值：`false`\n- 作用：跳过 TLS 证书验证。\n- 约束：不能与 `tls.ca` 同时配置；仅建议用于受控测试环境。",
     connect_timeout:
-      "- 类型：`u64`；默认：`5`\n- RouterOS API 连接超时秒数，必须大于 `0`。",
+      "- 类型：`u64`；必填：否；默认值：`5`\n- 单位：秒\n- 作用：限制建立 RouterOS API 连接的等待时间，必须大于 `0`。",
     send_timeout:
-      "- 类型：`u64`；默认：`5`\n- RouterOS API 命令发送超时秒数，必须大于 `0`。",
+      "- 类型：`u64`；必填：否；默认值：`5`\n- 单位：秒\n- 作用：限制发送单个 RouterOS API 命令的等待时间，必须大于 `0`。",
     receive_timeout:
-      "- 类型：`u64`；默认：`5`\n- RouterOS API 单段响应等待超时秒数，必须大于 `0`。",
+      "- 类型：`u64`；必填：否；默认值：`5`\n- 单位：秒\n- 作用：限制等待下一段 RouterOS API 响应数据的时间，必须大于 `0`；管理面响应较慢时可按需调大。",
     async:
-      "- 类型：`bool`；默认：`true`\n- `true` 只投递后台同步；`false` 等待当前观测的一次同步尝试，但不会改变 DNS 应答。",
+      "- 类型：`bool`；必填：否；默认值：`true`\n- 作用：启用后，DNS 回程阶段只向后台 manager 投递地址观察；关闭后等待当前观察的一次处理结果。RouterOS 写入失败不会改变 DNS 响应。",
     wait_timeout:
-      "- 类型：`duration`；默认：`8s`\n- 仅在 `async: false` 时限制等待；超时后任务继续在后台执行。",
+      "- 类型：`duration`；必填：否；默认值：`8s`\n- 作用：仅在 `async: false` 时限制 DNS 请求等待 manager 的时间。必须大于 `0`。\n- 运行影响：超时后 DNS 响应照常返回，已入队任务和后台重试不会被取消。",
     queue_capacity:
-      "- 类型：`usize`；默认：`16384`\n- 分别限制入口队列和重试积压中的不同路由 key。",
+      "- 类型：`usize`；必填：否；默认值：`16384`\n- 作用：分别限制入口去重队列和重试积压中不同路由 key 的数量，必须大于 `0`。\n- 运行影响：相同 key 的观察会合并；队列满时新的 key 会被丢弃并记录指标，但不影响 DNS 响应。",
     routing_table:
-      "- 类型：`string`；必填：是\n- 目标策略路由表；插件不会创建 routing table 或 routing rule。",
+      "- 类型：`string`；必填：是；默认值：无\n- 作用：指定受管路由写入的 RouterOS routing table。插件不会创建路由表、routing rule 或默认路由，这些对象必须提前配置。",
     gateway4:
-      "- 类型：`string`；必填：gateway4/gateway6 至少一项\n- IPv4 路由下一跳。",
+      "- 类型：`string`；条件必填；默认值：无\n- 作用：指定 IPv4 动态主机路由和 IPv4 常驻路由使用的 gateway 表达式。\n- 约束：`gateway4` 与 `gateway6` 至少配置一个；未配置本项时会忽略 IPv4 DNS 地址和 IPv4 `persistent` 项。",
     gateway6:
-      "- 类型：`string`；必填：gateway4/gateway6 至少一项\n- IPv6 路由下一跳。",
-    distance: "- 类型：`u8`；默认：`100`\n- RouterOS 静态路由 distance。",
+      "- 类型：`string`；条件必填；默认值：无\n- 作用：指定 IPv6 动态主机路由和 IPv6 常驻路由使用的 gateway 表达式。\n- 约束：`gateway4` 与 `gateway6` 至少配置一个；未配置本项时会忽略 IPv6 DNS 地址和 IPv6 `persistent` 项。",
+    distance:
+      "- 类型：`u8`；必填：否；默认值：`100`\n- 作用：指定插件写入所有受管路由的 RouterOS route distance。",
     comment_prefix:
-      "- 类型：`string`；默认：`oxi`\n- 路由注释归属前缀；该值及插件 tag 不能包含 `;` 或 `=`。",
+      "- 类型：`string`；必填：否；默认值：`oxi`\n- 作用：与插件 `tag` 共同构成 RouterOS comment 中的 ownership namespace，用于启动恢复、对账和安全清理。\n- 约束：该值和插件 `tag` 都不能包含 `;` 或 `=`；不要手工修改受管路由的 ownership comment。",
+    persistent:
+      "- 类型：`object`；必填：否；默认值：无\n- 作用：定义与 DNS 观察无关、需要持续存在的静态 IP/CIDR 路由。启动时同步一次；配置非空时每 180 秒对账一次。\n- 子字段：`ips`、`files`。动态 DNS 路由不参与周期对账。",
     "persistent.ips":
-      "- 类型：`array<string>`\n- DNS 无关的固定 IP/CIDR 路由；persistent 是启动恢复和每 180 秒定时对账的期望状态。",
+      "- 类型：`array<string>`；必填：否；默认值：空\n- 作用：以内联方式声明常驻 IPv4/IPv6 地址或 CIDR。单 IP 规范化为 `/32` 或 `/128`，CIDR 规范化到网络地址。\n- 忽略规则：对应地址族没有配置 gateway 的条目及 `/0` 默认路由会被忽略并记录警告。",
     "persistent.files":
-      "- 类型：`array<string>`\n- 仅在插件初始化或 reload 时读取的固定路由文件；定时对账使用内存集合，不重复读取文件。",
-    min_ttl: "- 类型：`u32`；默认：`60`\n- 动态 DNS 路由 TTL 的最小钳制值。",
-    max_ttl: "- 类型：`u32`；默认：`3600`\n- 动态 DNS 路由 TTL 的最大钳制值。",
+      "- 类型：`array<string>`；必填：否；默认值：空\n- 作用：从文本文件加载常驻路由；每行一个 IP/CIDR，支持使用 `#` 注释。\n- 加载时机：仅在插件初始化或 reload 时读取；周期对账使用内存集合，文件变化后需要 reload。",
+    min_ttl:
+      "- 类型：`u32`；必填：否；默认值：`60`\n- 单位：秒\n- 作用：动态主机路由租约的最小 TTL；较小的 DNS TTL 会提升到该值。",
+    max_ttl:
+      "- 类型：`u32`；必填：否；默认值：`3600`\n- 单位：秒\n- 作用：动态主机路由租约的最大 TTL；较大的 DNS TTL 会截断到该值。\n- 约束：`min_ttl` 不能大于 `max_ttl`。",
     fixed_ttl:
-      "- 类型：`u32`；默认：无\n- 覆盖动态 DNS 路由 TTL；设为 `0` 时不按时间过期，后续应答缺少该 IP 不会主动撤销。动态路由只在后续 DNS 再次观察到同一 IP 并达到阈值时刷新，不参与定时对账。",
+      "- 类型：`u32`；必填：否；默认值：无\n- 单位：秒\n- 作用：覆盖所有动态主机路由的 DNS TTL，不再使用 `min_ttl`/`max_ttl` 的裁剪结果。设为 `0` 表示不按时间过期。\n- 刷新边界：后续响应缺少旧 IP 不会主动撤销；动态路由仅由后续 DNS 观察刷新，不参与周期对账。",
     conntrack_guard:
-      "- 类型：`bool`；默认：`false`\n- 仅在删除到期动态 `/32`、`/128` 主机路由前检查精确目标 IP；存在连接或查询失败时延后 30 秒。persistent 删除和关闭清理不受影响。",
+      "- 类型：`bool`；必填：否；默认值：`false`\n- 作用：删除到期动态 `/32`、`/128` 主机路由前查询 RouterOS connection tracking；目标 IP 仍有连接时延后 30 秒。\n- 边界：查询失败时保留路由；常驻路由的配置删除、关闭清理和 CIDR 路由不受该保护。",
     cleanup_on_shutdown:
-      "- 类型：`bool`；默认：`true`\n- 正常关闭及应用级 reload 时清理该插件 tag 拥有的动态和固定路由；清理总预算为 30 秒。reload 按 shutdown/restart 处理，不移交旧实例待处理观测；需要策略连续性时建议设为 `false`。",
+      "- 类型：`bool`；必填：否；默认值：`true`\n- 作用：正常关闭和应用级 reload 时删除当前 ownership namespace 下的动态与常驻路由；整个关闭与清理流程共用 30 秒预算。\n- 配置建议：若重启或 reload 期间不能接受策略空窗，应设为 `false`。reload 不会移交旧实例的待处理观察。",
   },
   ros_address_list: {
     address:

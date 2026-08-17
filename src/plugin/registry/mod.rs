@@ -642,6 +642,9 @@ impl PluginRegistry {
 
         for tag in order.into_iter().rev() {
             if let Some(entry) = self.plugins.remove(&tag) {
+                if let Some(control) = entry.1.runtime_control() {
+                    control.drain().await;
+                }
                 if let Err(err) = entry.1.as_plugin().destroy().await {
                     error!(
                         plugin = %tag,

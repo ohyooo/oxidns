@@ -50,9 +50,10 @@ For each dependency update:
 6. Run affected focused tests, then the validation required below.
 7. Call out generated-code, wire-format, TLS, database, or persistence changes.
 
-The `mikrotik-proto` and `mikrotik-tokio` crates are patched to a Git branch in
-`Cargo.toml`. Treat changes to that patch as source changes, review the exact
-upstream commit, and run RouterOS transport/manager tests.
+The `mikrotik-rs` dependency is currently mapped to the OxiDNS-maintained
+`oxidns-mikrotik-rs` package because the upstream Tokio response-channel fix has
+not been released. Treat updates to that package as source changes, review the
+exact release, and run RouterOS transport/manager tests.
 
 ## Validation by Dependency Type
 
