@@ -54,6 +54,7 @@ See [Executor Plugins](executor.mdx) for full field reference. Grouped as: polic
 | [`arbitrary`](executor/resolution.mdx#arbitrary) | Injects arbitrary DNS records from zone-style rule strings. |
 | [`response`](executor/resolution.mdx#response) | Builds complete DNS responses from zone-record templates, including sections, RCODE, and response flags. |
 | [`redirect`](executor/resolution.mdx#redirect) | Rewrites a query name toward another target and restores the visible CNAME on the way back. |
+| [`client_ip_from_ecs`](executor/resolution.mdx#client_ip_from_ecs) | Replaces the request-local client IP with the ECS address for subsequent matchers and recorders. |
 | [`ecs_handler`](executor/resolution.mdx#ecs_handler) | Handles EDNS Client Subnet: keep, rewrite, or auto-fill from source IP. |
 | [`forward_edns0opt`](executor/resolution.mdx#forward_edns0opt) | Forwards selected EDNS0 options from the request into the final response. |
 

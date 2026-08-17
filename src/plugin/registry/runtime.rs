@@ -43,7 +43,7 @@ pub fn enable_runtime_test_serialization() {
 pub struct PluginRuntimeManager {
     pub(super) current: RwLock<Option<Arc<PluginRuntime>>>,
     controller: Mutex<Option<Arc<AppController>>>,
-    lifecycle: AsyncMutex<()>,
+    lifecycle: Arc<AsyncMutex<()>>,
 }
 
 impl PluginRuntimeManager {
@@ -51,7 +51,7 @@ impl PluginRuntimeManager {
         Self {
             current: RwLock::new(None),
             controller: Mutex::new(None),
-            lifecycle: AsyncMutex::new(()),
+            lifecycle: Arc::new(AsyncMutex::new(())),
         }
     }
 
@@ -59,7 +59,7 @@ impl PluginRuntimeManager {
         read_rwlock(&self.current).clone()
     }
 
-    pub async fn init_runtime(&self, config: Config) -> Result<Arc<PluginRuntime>> {
+    pub async fn init_runtime(self: &Arc<Self>, config: Config) -> Result<Arc<PluginRuntime>> {
         // Test serialization must not wait while holding the lifecycle lock.
         // A concurrently running test may need `destroy_runtime` to acquire
         // that lifecycle lock before it can drop the previous test guard.
@@ -69,43 +69,61 @@ impl PluginRuntimeManager {
         } else {
             None
         };
-        let _guard = self.lifecycle.lock().await;
+        let lifecycle_guard = self.lifecycle.clone().lock_owned().await;
+        let manager = self.clone();
+        tokio::spawn(async move {
+            let _lifecycle_guard = lifecycle_guard;
+            let mut candidate = PluginRegistry::new();
+            #[cfg(debug_assertions)]
+            candidate.set_test_runtime_guard(test_guard);
+            candidate.load_catalog(try_global_catalog()?);
+            let candidate = Arc::new(candidate);
 
-        let mut candidate = PluginRegistry::new();
-        #[cfg(debug_assertions)]
-        candidate.set_test_runtime_guard(test_guard);
-        candidate.load_catalog(try_global_catalog()?);
-        let candidate = Arc::new(candidate);
-
-        let previous = write_rwlock(&self.current).take();
-        if let Some(previous) = previous {
-            previous.destroy().await;
-        }
-        outbound::clear_global();
-        outbound::install_global(&config.network.outbound)?;
-
-        let matcher_runtime_controls_enabled = cfg!(feature = "api") && config.api.http.is_some();
-        if let Err(err) = candidate
-            .clone()
-            .init_plugins_with_runtime_controls(config.plugins, matcher_runtime_controls_enabled)
-            .await
-        {
-            candidate.destroy().await;
+            let previous = write_rwlock(&manager.current).take();
+            if let Some(previous) = previous {
+                previous.destroy().await;
+            }
             outbound::clear_global();
-            return Err(err);
-        }
+            outbound::install_global(&config.network.outbound)?;
 
-        write_rwlock(&self.current).replace(candidate.clone());
-        Ok(candidate)
+            let matcher_runtime_controls_enabled =
+                cfg!(feature = "api") && config.api.http.is_some();
+            if let Err(err) = candidate
+                .clone()
+                .init_plugins_with_runtime_controls(
+                    config.plugins,
+                    matcher_runtime_controls_enabled,
+                )
+                .await
+            {
+                candidate.destroy().await;
+                outbound::clear_global();
+                return Err(err);
+            }
+
+            write_rwlock(&manager.current).replace(candidate.clone());
+            Ok(candidate)
+        })
+        .await
+        .map_err(|error| {
+            DnsError::runtime(format!("runtime initialization task failed: {error}"))
+        })?
     }
 
-    pub async fn destroy_runtime(&self) {
-        let _guard = self.lifecycle.lock().await;
-        let previous = write_rwlock(&self.current).take();
-        if let Some(previous) = previous {
-            previous.destroy().await;
+    pub async fn destroy_runtime(self: &Arc<Self>) {
+        let lifecycle_guard = self.lifecycle.clone().lock_owned().await;
+        let manager = self.clone();
+        let task = tokio::spawn(async move {
+            let _lifecycle_guard = lifecycle_guard;
+            let previous = write_rwlock(&manager.current).take();
+            if let Some(previous) = previous {
+                previous.destroy().await;
+            }
+            outbound::clear_global();
+        });
+        if let Err(error) = task.await {
+            tracing::error!(%error, "runtime destruction task failed");
         }
-        outbound::clear_global();
     }
 
     /// The manager is the single authoritative owner of the application

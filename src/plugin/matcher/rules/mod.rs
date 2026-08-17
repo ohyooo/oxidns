@@ -20,6 +20,7 @@ pub(crate) use providers::{
 #[cfg(test)]
 pub(crate) use sources::parse_ip_prefix_matcher;
 pub(crate) use sources::{
-    parse_domain_rules_and_set_tags, parse_ip_rules_and_set_tags, split_rule_sources,
-    validate_non_empty_domain_rules_or_set_tags, validate_non_empty_ip_rules_or_set_tags,
+    parse_domain_rules_and_set_tags, parse_ip_rules_and_set_tags, provider_tags_from_rules,
+    split_rule_sources, validate_non_empty_domain_rules_or_set_tags,
+    validate_non_empty_ip_rules_or_set_tags,
 };

@@ -793,6 +793,26 @@ export const enUSPluginDefined = {
         },
       },
     },
+    client_ip_from_ecs: {
+      name: "Client IP From ECS",
+      description:
+        "Use the EDNS Client Subnet address as the request-local client IP for subsequent matchers and recorders",
+      fields: {
+        args: {
+          label: "Trusted source IPs / CIDRs",
+          description:
+            "Use ECS only when the original client IP matches this allow-list; empty args default to 127.0.0.1 and ::1.",
+          placeholder: "127.0.0.1\n10.0.0.0/24\n::1",
+        },
+        "args.$input": {
+          label: "IP or CIDR",
+          placeholder: "127.0.0.1",
+        },
+      },
+      quickSetup: {
+        paramPlaceholder: "127.0.0.1 or 10.0.0.0/24",
+      },
+    },
     ecs_handler: {
       name: "ECS Handler",
       description:
@@ -988,6 +1008,12 @@ export const enUSPluginDefined = {
       description:
         "Dual-stack optimizer that favors A records and suppresses alternative AAAA requests",
       fields: {
+        probe_executor: {
+          label: "Probe executor",
+          description:
+            "Specifies the executor used only for the internal preferred-QTYPE probe.",
+          placeholder: "probe_v4",
+        },
         cache: {
           label: "Cache preference status",
           description:
@@ -1004,6 +1030,12 @@ export const enUSPluginDefined = {
       description:
         "Dual stack optimizer, favoring AAAA records and suppressing alternative A requests",
       fields: {
+        probe_executor: {
+          label: "Probe executor",
+          description:
+            "Specifies the executor used only for the internal preferred-QTYPE probe.",
+          placeholder: "probe_v6",
+        },
         cache: {
           label: "Cache preference status",
           description:
@@ -1772,8 +1804,22 @@ export const enUSPluginDefined = {
             "The current number of coalesced observations waiting for the manager.",
           ros_route_managed_entries:
             "The number of route entries currently retained by the manager.",
+          ros_route_coalesced_total:
+            "The total number of route observations merged into an existing mailbox route key.",
+          ros_route_reconnect_total:
+            "The total number of successful RouterOS transport reconnections.",
+          ros_route_connect_attempt_total:
+            "The total number of RouterOS transport connection attempts.",
+          ros_route_backoff_total:
+            "The total number of RouterOS transport backoff schedules.",
+          ros_route_reconcile_error_total:
+            "The total number of failed persistent-route reconciliation attempts.",
+          ros_route_last_reconcile_success_timestamp_seconds:
+            "The Unix timestamp of the most recent successful persistent-route reconciliation.",
           ros_route_degraded:
             "Whether the RouterOS transport is currently degraded.",
+          ros_route_cleanup_error_total:
+            "The total number of route entries that failed shutdown cleanup.",
         },
       },
     },

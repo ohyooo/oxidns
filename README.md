@@ -86,7 +86,7 @@ plugins:
 | 协议接入 | UDP、TCP、DoT、DoQ、DoH（HTTP/1.1、HTTP/2、HTTP/3） |
 | 策略编排 | `sequence`、条件匹配、执行器组合、跳转与回退链 |
 | 上游与出口 | 多协议上游、并发响应裁决、连接复用、bootstrap、SOCKS5、统一 `network.outbound` |
-| 响应处理 | TTL 感知缓存与负缓存、ECS、本地记录、重定向、响应构造、双栈与 IP 优选 |
+| 响应处理 | TTL 感知缓存与负缓存、ECS 与 ECS 客户端地址映射、本地记录、重定向、响应构造、双栈与 IP 优选 |
 | 规则数据 | 域名与 IP 集、GeoIP、GeoSite、AdGuard 规则、动态域名学习 |
 | 系统联动 | Linux `ipset` / `nftset`、RouterOS address-list / static route、HTTP webhook、外部脚本 |
 | 可观测性 | 查询审计与执行路径、实时日志、Prometheus 指标、上游探测、健康检查 |

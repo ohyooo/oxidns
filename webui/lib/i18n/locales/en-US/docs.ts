@@ -166,6 +166,9 @@ export const enUSDocs = {
     files:
       "- Type: `array`; Required: No; Default: empty array\n- Function: Specify the external redirection rule file list.\n- The file format is the same as `rules`, one per line; blank lines and `#` comments are ignored.",
   },
+  client_ip_from_ecs: {
+    args: "- Type: `array[string]`; required: no; runtime default when empty: `[127.0.0.1, ::1]`\n- Function: Define original client IPs or CIDRs allowed to submit ECS.\n- Security: ECS is used only when the original connection address matches this list; IPv4, IPv6, individual IPs, and CIDRs are supported.",
+  },
   ecs_handler: {
     forward:
       "- Type: `boolean`; required: no; default value: `false`\n- Function: Control whether to retain the existing ECS in the client request.",
@@ -219,12 +222,16 @@ export const enUSDocs = {
       "- Type: `integer`; required: no; default value: `60`\n- Unit: seconds\n- Function: Define the retention time of failed detection scores.\n- Configuration requirements: Must be greater than 0 when caching is enabled.\n- Operational impact: Failure caching can prevent unreachable addresses from being repeatedly detected in a short period of time, while allowing faster recovery.",
   },
   prefer_ipv4: {
+    probe_executor:
+      "- Type: `string`; required: no; default: unset (compatibility continuation probe mode)\n- Purpose: References an executor used only for the internal preferred-QTYPE probe. Enter a plain executor tag without `$`.\n- Runtime impact: May reference `forward`, `sequence`, or another executor that can independently produce a DNS response. Probe marks, extensions, and execution-path state stay isolated from the outer context.\n- Cache limitation: Disable `cache` when the probe result depends on the client, marks, randomness, rate limits, or other request-scoped state.",
     cache:
       "- Type: `boolean`; required: no; default value: `true`\n- Function: Control whether to cache the preferred type existence status.",
     cache_ttl:
       "- Type: `integer`; Required: No; Default: `3600`\n- Unit: seconds\n- Function: Define preferred status cache duration.",
   },
   prefer_ipv6: {
+    probe_executor:
+      "- Type: `string`; required: no; default: unset (compatibility continuation probe mode)\n- Purpose: References an executor used only for the internal preferred-QTYPE probe. Enter a plain executor tag without `$`.\n- Runtime impact: May reference `forward`, `sequence`, or another executor that can independently produce a DNS response. Probe marks, extensions, and execution-path state stay isolated from the outer context.\n- Cache limitation: Disable `cache` when the probe result depends on the client, marks, randomness, rate limits, or other request-scoped state.",
     cache:
       "- Type: `boolean`; required: no; default value: `true`\n- Function: Control whether to cache the preferred type existence status.",
     cache_ttl:
@@ -374,51 +381,56 @@ export const enUSDocs = {
   },
   ros_route: {
     address:
-      "- Type: `string`; Required: yes\n- RouterOS API endpoint, usually `host:port`.",
-    username: "- Type: `string`; Required: yes\n- RouterOS API login username.",
-    password: "- Type: `string`; Required: yes\n- RouterOS API login password.",
-    tls: "- Type: `object`; Default: disabled\n- Enables RouterOS API-SSL, typically on port 8729.",
+      "- Type: `string`; Required: yes; Default: none\n- Purpose: RouterOS API endpoint in `host:port` form. Plaintext API commonly uses `8728`, while API-SSL commonly uses `8729`; use the port configured on the device.",
+    username:
+      "- Type: `string`; Required: yes; Default: none\n- Purpose: RouterOS API username. The account needs permission to inspect and manage the target routing table and, when `conntrack_guard` is enabled, read connection tracking.",
+    password:
+      "- Type: `string`; Required: yes; Default: none\n- Purpose: RouterOS API password used during initialization, reconnects, and background synchronization.\n- Security: Do not expose real credentials in public repositories, logs, or shared examples.",
+    tls: "- Type: `object`; Required: no; Default: none (plaintext API)\n- Purpose: Enables RouterOS API-SSL. Usually, `address` must also use the TLS port configured on the device.",
     "tls.server_name":
-      "- Type: `string`; Default: derived from the connection address\n- Server name used for the TLS handshake.",
+      "- Type: `string`; Required: no; Default: inferred from `address`\n- Purpose: Overrides the server name used during the TLS handshake and certificate validation. Configure it when connecting by IP or when the inferred value does not match the certificate.",
     "tls.ca":
-      "- Type: `string`; Default: system trust store\n- Path to a custom CA certificate file.",
+      "- Type: `string`; Required: no; Default: system trust store\n- Purpose: Path to a PEM file containing a self-signed certificate or private CA.\n- Constraint: Cannot be combined with `tls.insecure: true`.",
     "tls.insecure":
-      "- Type: `bool`; Default: `false`\n- Skips TLS certificate verification; use only in controlled test environments.",
+      "- Type: `bool`; Required: no; Default: `false`\n- Purpose: Disables TLS certificate verification.\n- Constraint: Cannot be combined with `tls.ca`; use only in controlled test environments.",
     connect_timeout:
-      "- Type: `u64`; Default: `5`\n- RouterOS API connection timeout in seconds; must be greater than `0`.",
+      "- Type: `u64`; Required: no; Default: `5`\n- Unit: seconds\n- Purpose: Maximum time allowed to establish a RouterOS API connection. Must be greater than `0`.",
     send_timeout:
-      "- Type: `u64`; Default: `5`\n- RouterOS API command-send timeout in seconds; must be greater than `0`.",
+      "- Type: `u64`; Required: no; Default: `5`\n- Unit: seconds\n- Purpose: Maximum time allowed to send one RouterOS API command. Must be greater than `0`.",
     receive_timeout:
-      "- Type: `u64`; Default: `5`\n- RouterOS API per-response-chunk timeout in seconds; must be greater than `0`.",
+      "- Type: `u64`; Required: no; Default: `5`\n- Unit: seconds\n- Purpose: Maximum time allowed to receive the next part of a RouterOS API response. Must be greater than `0`; increase it only for a known slow management plane.",
     async:
-      "- Type: `bool`; Default: `true`\n- `true` queues background synchronization; `false` waits for one attempt for the current observation without changing the DNS response.",
+      "- Type: `bool`; Required: no; Default: `true`\n- Purpose: When enabled, the DNS return path only submits observations to the background manager. When disabled, it waits for one manager result. RouterOS failures never modify the DNS response.",
     wait_timeout:
-      "- Type: `duration`; Default: `8s`\n- With `async: false`, limits waiting while accepted work continues after timeout.",
+      "- Type: `duration`; Required: no; Default: `8s`\n- Purpose: With `async: false`, limits how long a DNS request waits for the manager. Must be greater than `0`.\n- Operational impact: On timeout, the DNS response returns normally and queued work and retries continue in the background.",
     queue_capacity:
-      "- Type: `usize`; Default: `16384`\n- Independently limits distinct route keys in ingress and retry stages.",
+      "- Type: `usize`; Required: no; Default: `16384`\n- Purpose: Distinct route-key limit applied independently to the deduplicating ingress queue and retry backlog. Must be greater than `0`.\n- Operational impact: Repeated observations for the same key coalesce; a new key is dropped with a metric when full, without changing the DNS response.",
     routing_table:
-      "- Type: `string`; Required: yes\n- Target policy-routing table; the plugin does not create tables or routing rules.",
+      "- Type: `string`; Required: yes; Default: none\n- Purpose: RouterOS routing table that receives managed routes. The plugin does not create the table, routing rules, or default routes; provision them first.",
     gateway4:
-      "- Type: `string`; Required: one of gateway4/gateway6\n- IPv4 route next hop.",
+      "- Type: `string`; Conditionally required; Default: none\n- Purpose: RouterOS gateway expression used by IPv4 dynamic host routes and persistent IPv4 routes.\n- Constraint: Configure at least one of `gateway4` or `gateway6`. Without this field, IPv4 DNS addresses and IPv4 `persistent` entries are ignored.",
     gateway6:
-      "- Type: `string`; Required: one of gateway4/gateway6\n- IPv6 route next hop.",
-    distance: "- Type: `u8`; Default: `100`\n- RouterOS static-route distance.",
+      "- Type: `string`; Conditionally required; Default: none\n- Purpose: RouterOS gateway expression used by IPv6 dynamic host routes and persistent IPv6 routes.\n- Constraint: Configure at least one of `gateway4` or `gateway6`. Without this field, IPv6 DNS addresses and IPv6 `persistent` entries are ignored.",
+    distance:
+      "- Type: `u8`; Required: no; Default: `100`\n- Purpose: RouterOS route distance applied to every managed route.",
     comment_prefix:
-      "- Type: `string`; Default: `oxi`\n- Route-comment ownership prefix; it and the plugin tag cannot contain `;` or `=`.",
+      "- Type: `string`; Required: no; Default: `oxi`\n- Purpose: Combines with the plugin `tag` to form the ownership namespace stored in RouterOS comments for startup recovery, reconciliation, and safe cleanup.\n- Constraint: Neither this value nor the plugin `tag` may contain `;` or `=`. Do not manually alter ownership comments on managed routes.",
+    persistent:
+      "- Type: `object`; Required: no; Default: none\n- Purpose: DNS-independent static IP/CIDR routes that should remain present. They are synchronized at startup and reconciled every 180 seconds when non-empty.\n- Fields: `ips` and `files`. Dynamic DNS routes are excluded from periodic reconciliation.",
     "persistent.ips":
-      "- Type: `array<string>`\n- DNS-independent persistent IP/CIDR routes. Persistent routes are desired state recovered at startup and reconciled every 180 seconds.",
+      "- Type: `array<string>`; Required: no; Default: empty\n- Purpose: Inline persistent IPv4/IPv6 addresses or CIDRs. Plain addresses normalize to `/32` or `/128`, and CIDRs normalize to their network address.\n- Ignore rules: Entries whose family has no configured gateway and `/0` default routes are ignored with a warning.",
     "persistent.files":
-      "- Type: `array<string>`\n- Read only during plugin initialization or reload; periodic reconcile uses the in-memory set and never rereads files.",
+      "- Type: `array<string>`; Required: no; Default: empty\n- Purpose: Loads persistent routes from text files, one IP/CIDR per line, with `#` comments supported.\n- Load timing: Files are read only during initialization or reload. Periodic reconciliation uses the in-memory set, so file changes require a reload.",
     min_ttl:
-      "- Type: `u32`; Default: `60`\n- Minimum clamp for dynamic DNS-route TTLs.",
+      "- Type: `u32`; Required: no; Default: `60`\n- Unit: seconds\n- Purpose: Lower bound for dynamic host-route leases. Smaller DNS TTLs are raised to this value.",
     max_ttl:
-      "- Type: `u32`; Default: `3600`\n- Maximum clamp for dynamic DNS-route TTLs.",
+      "- Type: `u32`; Required: no; Default: `3600`\n- Unit: seconds\n- Purpose: Upper bound for dynamic host-route leases. Larger DNS TTLs are capped at this value.\n- Constraint: `min_ttl` must not exceed `max_ttl`.",
     fixed_ttl:
-      "- Type: `u32`; Default: none\n- Overrides dynamic DNS-route TTL; `0` disables time-based expiry. Missing IPs in later answers are not withdrawn. Dynamic routes refresh only after a later DNS observation reaches the threshold and are excluded from periodic reconcile.",
+      "- Type: `u32`; Required: no; Default: none\n- Unit: seconds\n- Purpose: Overrides the DNS TTL for every dynamic host route, bypassing the `min_ttl`/`max_ttl` result. Set it to `0` to disable time-based expiry.\n- Refresh boundary: Later answers do not withdraw omitted IPs. Only later DNS observations refresh dynamic routes, which are excluded from periodic reconciliation.",
     conntrack_guard:
-      "- Type: `bool`; Default: `false`\n- Checks exact destination IPs before deleting expired dynamic `/32` and `/128` routes. Active connections or query failures defer deletion for 30 seconds. Persistent and shutdown cleanup bypass the guard.",
+      "- Type: `bool`; Required: no; Default: `false`\n- Purpose: Queries RouterOS connection tracking before deleting an expired dynamic `/32` or `/128` host route. A target connection defers deletion for 30 seconds.\n- Boundary: Query failures keep the route. Persistent configuration removal, shutdown cleanup, and CIDR routes bypass this guard.",
     cleanup_on_shutdown:
-      "- Type: `bool`; Default: `true`\n- Remove dynamic and persistent routes owned by this plugin during normal shutdown and application-level reload, with a 30-second total cleanup budget. Reload uses shutdown/restart semantics and does not transfer pending observations from the old instance. Set it to `false` when policy continuity is required.",
+      "- Type: `bool`; Required: no; Default: `true`\n- Purpose: Removes dynamic and persistent routes in the current ownership namespace during normal shutdown and application reload. Shutdown and cleanup share one 30-second budget.\n- Recommendation: Set it to `false` when a restart or reload must not create a policy gap. Reload does not transfer pending observations from the old instance.",
   },
   ros_address_list: {
     address:

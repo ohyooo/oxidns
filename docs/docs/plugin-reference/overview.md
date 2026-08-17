@@ -54,6 +54,7 @@ server -> sequence
 | [`arbitrary`](executor/resolution.mdx#arbitrary) | 加载任意静态 DNS 记录并在命中时直接构造应答。 |
 | [`response`](executor/resolution.mdx#response) | 使用 zone record 模板构造完整 DNS 响应，包括记录区、RCODE 与响应标志。 |
 | [`redirect`](executor/resolution.mdx#redirect) | 把请求域名改写为另一个目标域名，并在返回阶段补回客户端可见的 CNAME。 |
+| [`client_ip_from_ecs`](executor/resolution.mdx#client_ip_from_ecs) | 使用请求 ECS 地址覆盖当前请求的客户端 IP，供后续 matcher 与记录器使用。 |
 | [`ecs_handler`](executor/resolution.mdx#ecs_handler) | 处理 EDNS Client Subnet：保留、改写或按来源 IP 自动补齐。 |
 | [`forward_edns0opt`](executor/resolution.mdx#forward_edns0opt) | 把指定 EDNS0 option code 从请求转发到最终响应中。 |
 

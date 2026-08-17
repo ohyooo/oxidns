@@ -3,4 +3,14 @@
 
 //! Shared file and stream handling helpers.
 
-pub(crate) mod lines;
+mod fingerprint;
+mod text_source;
+
+pub(crate) use fingerprint::FingerprintReader;
+// Some facade types are exposed through method signatures and therefore do
+// not need to be named by current callers.
+#[allow(unused_imports)]
+pub(crate) use text_source::{
+    LineAnnotations, LineClassifier, TextLine, TextLocation, TextScanError, TextSource,
+    TextSourceSession,
+};
