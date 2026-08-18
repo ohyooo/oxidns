@@ -35,7 +35,7 @@ import type { PluginInstance, PluginType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { WEBUI } from "@/lib/i18n";
 import { useI18n } from "@/lib/i18n/provider";
-import { ChevronDown, Info, Minus, Plus } from "lucide-react";
+import { ChevronDown, Info, Minus, Plus, X } from "lucide-react";
 import {
   Fragment,
   useEffect,
@@ -942,6 +942,25 @@ function ConfigFieldControl({
               )
             }
           />
+          {!field.required && referenceValue && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon-lg"
+                  disabled={readOnly}
+                  aria-label={t(WEBUI.plugins.clearSelection)}
+                  onClick={() => onChange("")}
+                >
+                  <X />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent sideOffset={6}>
+                {t(WEBUI.plugins.clearSelection)}
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
       );
     default:

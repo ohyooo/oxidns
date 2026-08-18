@@ -23,7 +23,10 @@ use crate::infra::clock::AppClock;
 use crate::infra::observability::log_buffer::{LogBuffer, LogLayer, install_global_log_buffer};
 
 /// Initialize the logging system with console and optional file output.
-pub fn start_logging(log: LogConfig) -> WorkerGuard {
+///
+/// The returned guard is present only when file output uses the background
+/// writer and must remain alive until shutdown so pending records are flushed.
+pub(crate) fn start_logging(log: LogConfig) -> Option<WorkerGuard> {
     let (file_writer, guard) = if let Some(ref file_path) = log.file {
         let file_appender = build_file_appender(file_path, &log.rotation)
             .unwrap_or_else(|err| panic!("failed to initialize log file appender: {err}"));
@@ -80,7 +83,7 @@ pub fn start_logging(log: LogConfig) -> WorkerGuard {
         info!(level = %log.level, "Logging system initialized");
     }
 
-    guard.unwrap_or_else(|| tracing_appender::non_blocking(std::io::sink()).1)
+    guard
 }
 
 fn build_file_appender(path: &str, rotation: &LogRotation) -> std::io::Result<RollingFileAppender> {

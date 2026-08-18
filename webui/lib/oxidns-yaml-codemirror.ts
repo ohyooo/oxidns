@@ -74,12 +74,22 @@ export interface OxiDnsYamlDiagnostic {
   end_column?: number;
 }
 
-const sequenceControls = ["accept", "return", "reject", "mark", "jump", "goto"];
+const sequenceControls = [
+  "accept",
+  "return",
+  "reject",
+  "mark",
+  "set_mark",
+  "jump",
+  "goto",
+];
 const sequenceControlExamples = [
   "reject SERVFAIL",
   "reject servfail",
   "reject NOERROR",
   "reject 3",
+  "mark 1,2",
+  "set_mark 2,3",
 ];
 const editorFontFamily =
   "JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, Consolas, Liberation Mono, monospace";

@@ -7,10 +7,40 @@ import ReleaseCard from '@site/src/components/ReleaseCard';
 
 # 版本更新
 
+## 2026-08
+
+<div className="release-stack">
+   <ReleaseCard version="v1.5.2" badge="Patch Release" date="2026-08-18" defaultOpen>
+       **版本定位**
+
+       - Patch Release。v1.5.2 聚焦可信客户端 IP 还原、双栈优选探针隔离、大规则集加载效率与运行时生命周期安全，并补齐 sequence mark 集合操作和发布链路可靠性。
+       - v1.5.1 YAML 配置可以直接升级；新增 `client_ip_from_ecs`、`dual_selector.probe_executor` 与 `set_mark` 均为可选能力，现有策略不会因升级自动改变。
+
+       **主要变更**
+
+       - `feat(client_ip_from_ecs)`：新增执行器，可在可信转发端提交 ECS 时把请求局部客户端 IP 替换为 ECS 地址，供后续 client-IP matcher、记录器与策略使用。缺省或空白名单只信任 IPv4/IPv6 loopback，并且仅接受 IPv4 `/32` 或 IPv6 `/128` 完整主机前缀；该插件加入 standard 与 full bundle，minimal 不包含。
+       - `feat/fix(dual_selector)`：`prefer_ipv4` / `prefer_ipv6` 新增可选 `probe_executor`，可让 preferred QTYPE 探针走专用 `forward` 或 `sequence`；未配置时继续使用原有 downstream continuation。原始查询与探针使用隔离的子上下文，所有返回路径都会等待或取消两侧任务，插件销毁时同步停止清理任务；缺失引用、类型错误、自引用和循环依赖在启动时拒绝。
+       - `feat(sequence)`：`mark` 支持以空格或逗号一次追加多个 `u32` 值；新增 `set_mark` 完整替换当前 mark 集合。重复值自动去重，缺参、负数、非数字与溢出在 sequence 初始化时失败，依赖图、执行路径与 WebUI 编辑器同步识别新语法。
+       - `perf/fix(loaders)`：统一 matcher、hosts、redirect、provider、RouterOS 持久化数据与 zone records 的流式文本读取和预分配路径，避免为大文件保留完整文本或中间规则集合；zone parser 新增 visitor API。多轮编译使用指纹校验同一输入，只在完整候选构建成功后发布快照，并把大规模编译移出 async runtime。
+       - `fix(runtime/providers)`：provider reload 在调用方取消后仍保持串行 ownership，runtime teardown 会等待在途 reload 与后台构建完成，避免旧快照编译跨越 reload/destroy 边界；AdGuard/V2Ray 等 replay 编译同步补齐来源定位、注释处理与失败回滚覆盖。
+       - `fix(download/upgrade)`：共享 HTTP 下载使用具备 Drop 清理的临时文件，超时、取消或失败会移除未完成文件，成功后才原子替换目标；同时修正 Windows ZIP 升级路径类型处理。
+       - `deps/ci/release`：切换到包含无损 Tokio response channel 修复的 `oxidns-mikrotik-rs 0.8.1`，移除临时 Git patch 与 crates.io `--no-verify`；升级 `hotpath`、`base64` 等依赖，隔离跨 target 构建缓存，并让 tag workflow 按依赖顺序发布发生版本变化的 workspace support crates。
+       - `docs/benchmarks/telegram`：重组中英文安装、配置、CLI、API 与插件参考，新增可复现的多实现 benchmark 场景与结果；Telegram 公告改为保留标题、列表、强调、行内代码和链接的兼容 HTML，并加入长度截断测试。
+
+       **配置与升级说明**
+
+       - 根 crate 版本号升级为 `1.5.2`；`oxidns-proto` 升级为 `0.1.5`，`oxidns-zoneparser` 升级为 `0.1.2`；release tag 应使用 `v1.5.2`。发布流程会先发布新的 support-crate 版本，再发布根 crate。
+       - v1.5.1 配置可以直接升级，本次没有重命名或删除配置字段，也没有改变现有插件的默认策略。替换二进制前仍建议运行 `oxidns check -c <配置文件>`。
+       - `client_ip_from_ecs` 会改变后续插件观察到的 request-local client IP。请把它放在相关 matcher 与记录器之前，并只把受控反向代理或本机转发器加入 `args`；不要信任可被终端直接访问的来源。转发端必须发送 `/32` 或 `/128` ECS，网络前缀会被忽略。
+       - `dual_selector.probe_executor` 未配置时保持 v1.5.1 行为。配置后，探针的上下文 mark、响应和临时状态不会回写原请求，但已经执行的外部副作用无法回滚；专用探针链应优先使用无副作用的解析执行器。
+       - 现有单值 `mark` 语法保持有效；只有显式使用 `set_mark` 才会清空原集合。大规则文件若在同一次多轮编译期间发生变化，新候选会被拒绝并继续保留旧快照，运维自动化应在文件完整落盘后再触发 reload。
+   </ReleaseCard>
+</div>
+
 ## 2026-07
 
 <div className="release-stack">
-   <ReleaseCard version="v1.5.1" badge="Patch Release" date="2026-07-22" defaultOpen>
+   <ReleaseCard version="v1.5.1" badge="Patch Release" date="2026-07-22">
        **版本定位**
 
        - Patch Release。v1.5.1 聚焦 matcher 运行时控制、升级运维与 WebUI 质量：将 matcher 的临时启停扩展为三态基础结果控制，补齐强制升级与升级后清理入口，并集中修复国际化、轮询、日志和插件卡片展示。

@@ -150,6 +150,11 @@ fn enabled_public_features() -> Vec<&'static str> {
     );
     push_feature(
         &mut features,
+        cfg!(feature = "plugin-client-ip-from-ecs"),
+        "plugin-client-ip-from-ecs",
+    );
+    push_feature(
+        &mut features,
         cfg!(feature = "plugin-arbitrary"),
         "plugin-arbitrary",
     );
@@ -222,6 +227,10 @@ mod tests {
         assert_eq!(
             info.enabled_features.contains(&"plugin-response"),
             cfg!(feature = "plugin-response")
+        );
+        assert_eq!(
+            info.enabled_features.contains(&"plugin-client-ip-from-ecs"),
+            cfg!(feature = "plugin-client-ip-from-ecs")
         );
     }
 }

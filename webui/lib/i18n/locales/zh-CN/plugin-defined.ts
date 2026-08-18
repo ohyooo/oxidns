@@ -278,9 +278,9 @@ export const zhCNPluginDefined = {
         "args[].exec": {
           label: "执行动作",
           description:
-            "定义规则命中后要执行的动作，可引用执行器或使用 accept、return、reject、jump、goto、mark 等内置动作；reject 支持大小写不敏感的 RCODE 名称和数字。",
+            "定义规则命中后要执行的动作，可引用执行器或使用 accept、return、reject、jump、goto、mark、set_mark 等内置动作；mark 追加标记，set_mark 完整替换标记集合；reject 支持大小写不敏感的 RCODE 名称和数字。",
           placeholder:
-            "$forward_main / accept / reject SERVFAIL / reject NOERROR / reject 3 / jump seq_tag",
+            "$forward_main / accept / reject SERVFAIL / mark 1,2 / set_mark 2,3 / jump seq_tag",
         },
       },
     },
@@ -715,6 +715,26 @@ export const zhCNPluginDefined = {
         },
       },
     },
+    client_ip_from_ecs: {
+      name: "从 ECS 获取客户端 IP",
+      description:
+        "使用 EDNS Client Subnet 地址覆盖当前请求的客户端 IP，供后续匹配器和记录器使用",
+      fields: {
+        args: {
+          label: "可信来源 IP / CIDR",
+          description:
+            "仅当原始客户端 IP 命中该列表时，才采用请求中的 ECS 地址；留空默认允许 127.0.0.1 和 ::1。",
+          placeholder: "127.0.0.1\n10.0.0.0/24\n::1",
+        },
+        "args.$input": {
+          label: "IP 或 CIDR",
+          placeholder: "127.0.0.1",
+        },
+      },
+      quickSetup: {
+        paramPlaceholder: "127.0.0.1 或 10.0.0.0/24",
+      },
+    },
     ecs_handler: {
       name: "ECS Handler",
       description: "处理 EDNS Client Subnet 的保留、注入和回程清理",
@@ -896,6 +916,11 @@ export const zhCNPluginDefined = {
       name: "Prefer IPv4",
       description: "双栈优选器，偏好 A 记录并抑制可替代的 AAAA 请求",
       fields: {
+        probe_executor: {
+          label: "探针执行器",
+          description: "指定仅用于 preferred QTYPE 内部探针的执行器。",
+          placeholder: "probe_v4",
+        },
         cache: {
           label: "缓存偏好状态",
           description: "控制是否缓存 preferred 类型存在状态。",
@@ -910,6 +935,11 @@ export const zhCNPluginDefined = {
       name: "Prefer IPv6",
       description: "双栈优选器，偏好 AAAA 记录并抑制可替代的 A 请求",
       fields: {
+        probe_executor: {
+          label: "探针执行器",
+          description: "指定仅用于 preferred QTYPE 内部探针的执行器。",
+          placeholder: "probe_v6",
+        },
         cache: {
           label: "缓存偏好状态",
           description: "控制是否缓存 preferred 类型存在状态。",
@@ -1609,7 +1639,17 @@ export const zhCNPluginDefined = {
           ros_route_pending_observations:
             "当前等待 manager 处理的合并后观测数。",
           ros_route_managed_entries: "manager 当前保留的路由条目数。",
+          ros_route_coalesced_total:
+            "合并到已有 mailbox 路由 key 的地址观测总数。",
+          ros_route_reconnect_total: "RouterOS transport 成功重连的总次数。",
+          ros_route_connect_attempt_total:
+            "RouterOS transport 发起连接尝试的总次数。",
+          ros_route_backoff_total: "RouterOS transport 安排退避等待的总次数。",
+          ros_route_reconcile_error_total: "常驻路由对账失败的总次数。",
+          ros_route_last_reconcile_success_timestamp_seconds:
+            "最近一次常驻路由对账成功的 Unix 时间。",
           ros_route_degraded: "RouterOS transport 当前是否处于降级状态。",
+          ros_route_cleanup_error_total: "关闭清理失败的路由条目总数。",
         },
       },
     },
