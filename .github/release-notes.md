@@ -1,29 +1,27 @@
-# OxiDNS v1.5.1
+# OxiDNS v1.5.2
 
 ## 🚀 发布概览
 
-- v1.5.1 是一次聚焦 matcher 运行时控制、升级运维和 WebUI 质量的 Patch Release：新增三态 matcher 基础结果控制、强制重装与升级后清理，并集中修复国际化、轮询、日志及插件卡片展示。
-- v1.5.0 YAML 配置可以直接升级，但 matcher 运行时管理 API 已移除旧的 `/enable`、`/disable` 接口和 `enabled` 响应字段；依赖该 API 的客户端必须先完成迁移。
+- v1.5.2 是一次聚焦客户端 IP 还原、双栈探针隔离、大规则集加载效率与运行时生命周期安全的 Patch Release，并补齐 sequence mark 集合操作和发布链路可靠性。
+- v1.5.1 YAML 配置可以直接升级；新增 `client_ip_from_ecs`、`dual_selector.probe_executor` 与 `set_mark` 均为可选能力，现有策略不会自动改变。
 
 ## ✨ 主要亮点
 
-- matcher 运行时模式扩展为 `normal`、`always_false` 和 `always_true`；两个固定模式跳过内部逻辑并固定基础布尔值，正向与取反引用随后仍分别应用取反，因此结果始终相反。
-- 管理 API 与 WebUI 支持强制重新安装当前版本，并可选择在成功升级后清理下载缓存和备份；清理前会释放升级锁，清理失败不会改变升级成功结果。
-- 补齐 RouterOS、插件定义、指标和控制台的中英文翻译与日期本地化，并加入 i18n 覆盖审计，避免英文界面回退到中文。
-- WebUI 轮询按页面可见性调度并隔离不同后端的运行时状态、指标基线和升级检查；长时间中断后会重置 QPS 采样。
-- 日志查看器新增时间戳偏好、可选耗时、自适应单位和紧凑 target；插件配置、指标与系统内存展示同步统一。
-- release 构建采用体积优先优化、fat LTO 和符号剥离，缩减 Tokio/TLS feature，并在 minimal/standard 产物流程中尝试 UPX 压缩。
-- crates.io 源码包排除仅供开发的 benchmark、站点文档和 WebUI 源码，避免触及 registry 包体限制。
-- RouterOS 暂时通过 Git patch 使用 unbounded response channel 修复，避免突发流量下丢失协议事件；该 patch 不单独发布，crates.io 发布在上游修复前暂用 `--no-verify`。
-- GitHub Release 与 Telegram 公告现在共用经过版本标题校验的发布说明，Telegram 公告会发送到指定 topic 并自动置顶。
+- 新增 `client_ip_from_ecs` 执行器：仅在原始 peer 命中可信白名单时采用 ECS，并只接受 IPv4 `/32` 或 IPv6 `/128` 完整主机前缀；缺省或空白名单只信任本机 loopback。该插件包含在 standard/full bundle 中。
+- `prefer_ipv4` / `prefer_ipv6` 支持可选专用 `probe_executor`；未配置时保留原有 continuation 模式。原始查询与探针上下文相互隔离，所有完成路径会等待或取消后台任务，错误引用和依赖环在启动时拒绝。
+- sequence 的 `mark` 可一次追加多个值，并新增 `set_mark` 完整替换 mark 集合；无效或溢出的值会在初始化阶段报错，WebUI 与依赖图同步支持。
+- matcher、hosts、redirect、provider、RouterOS 持久化与 zone records 统一采用流式加载、容量预留和隔离构建；多轮编译会校验输入指纹，只发布完整成功的快照。
+- provider reload 在调用方取消后仍保持串行 ownership，runtime teardown 会等待在途 reload 与构建完成；下载超时、取消或失败时会自动清理未完成临时文件。
+- RouterOS 切换到含无损 response channel 修复的 `oxidns-mikrotik-rs 0.8.1`，移除临时 Git patch 和 crates.io `--no-verify`；发布 workflow 会按依赖顺序上传新版 support crates。
+- 双语文档完成结构化重组并加入可复现 benchmark；Telegram 发布公告现在保留标题、列表、强调、行内代码和链接格式。
 
 ## ⚠️ 升级说明
 
-- 现有 v1.5.0 YAML 配置可以直接升级，本次没有新增或重命名配置字段。替换二进制前建议运行 `oxidns check -c <配置文件>`。
-- Matcher API 客户端必须改用 `POST /api/plugins/<matcher_tag>/mode`，请求体为 `{ "mode": "normal|always_false|always_true" }`；`GET /status` 现在返回 `mode`。旧接口会返回 404。
-- matcher 固定模式不会写入 YAML，应用 reload 或进程重启后恢复为 `normal`；同一 tag 的所有引用共享基础值，但每个 `$tag` / `!$tag` 引用仍保留自身的取反语义。
-- WebUI 默认在成功升级后删除下载缓存与备份；如需保留本地回滚文件，请关闭“升级后清理”。强制升级会重新安装当前版本，执行前请确认目标 bundle 和平台。
-- minimal/standard 产物可能经过 UPX 压缩；使用二进制扫描、白名单或完整性基线的环境应重新验证 release asset digest，并先完成启动与回滚演练。
+- 现有 v1.5.1 配置可以直接升级，没有字段被重命名或删除，也没有现有插件默认策略变化。替换二进制前建议运行 `oxidns check -c <配置文件>`。
+- 使用 `client_ip_from_ecs` 时，请放在相关 client-IP matcher 和记录器之前，只信任受控代理或本机转发器；不要信任客户端可直接访问的来源。网络前缀 ECS 会被忽略。
+- `dual_selector.probe_executor` 未配置时行为不变；专用探针上下文不会回写 mark 或响应，但已经发生的外部副作用无法回滚，建议使用无副作用的解析链。
+- 现有单值 `mark` 语法保持有效；只有显式使用 `set_mark` 才会清空原集合。规则文件应完整原子替换后再触发 reload，否则变化中的候选会被拒绝并继续使用旧快照。
+- 根 crate 为 `1.5.2`，`oxidns-proto` 为 `0.1.5`，`oxidns-zoneparser` 为 `0.1.2`；release tag 应为 `v1.5.2`。
 
 ## 📦 下载与校验
 

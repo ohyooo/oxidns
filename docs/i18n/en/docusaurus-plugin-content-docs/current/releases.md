@@ -7,10 +7,40 @@ import ReleaseCard from '@site/src/components/ReleaseCard';
 
 # Release Notes
 
+## 2026-08
+
+<div className="release-stack">
+   <ReleaseCard version="v1.5.2" badge="Patch Release" date="2026-08-18" defaultOpen>
+       **Release Scope**
+
+       - Patch Release. v1.5.2 focuses on trusted client-IP restoration, isolated dual-stack preference probes, efficient large-rule loading, and safe runtime lifecycles. It also adds sequence mark-set operations and hardens the release pipeline.
+       - v1.5.1 YAML configurations upgrade directly. The new `client_ip_from_ecs` executor, `dual_selector.probe_executor` field, and `set_mark` builtin are all opt-in, so existing policies do not change automatically.
+
+       **Changes**
+
+       - `feat(client_ip_from_ecs)`: add an executor that replaces the request-local client IP with an ECS address supplied by a trusted forwarding peer, making that address available to subsequent client-IP matchers, recorders, and policies. Missing or empty allowlists trust IPv4 and IPv6 loopback only, and only complete IPv4 `/32` or IPv6 `/128` host prefixes are accepted. The plugin is included in the standard and full bundles, but not minimal.
+       - `feat/fix(dual_selector)`: add optional `probe_executor` support to `prefer_ipv4` and `prefer_ipv6`, allowing preferred-QTYPE probes to use a dedicated `forward` or `sequence`. Omitting it preserves the previous downstream-continuation behavior. Original and probe work use isolated subquery contexts, every return path joins or cancels both tasks, cleanup stops during plugin destruction, and startup rejects missing, wrong-kind, self-referencing, or cyclic dependencies.
+       - `feat(sequence)`: let `mark` append multiple `u32` values separated by spaces or commas, and add `set_mark` to replace the entire current mark set. Duplicate values are collapsed, while missing, negative, non-numeric, or overflowing values fail sequence initialization. Dependency graphs, execution paths, and the WebUI editor understand the new syntax.
+       - `perf/fix(loaders)`: unify streaming text input and capacity reservation across matchers, hosts, redirect, providers, RouterOS persistence, and zone records, avoiding retention of complete large files or intermediate rule collections. The zone parser gains visitor APIs. Multi-pass compilation fingerprints replayed inputs, publishes only fully built candidates, and moves large compilation work off the async runtime.
+       - `fix(runtime/providers)`: provider reload retains serialized ownership after caller cancellation, and runtime teardown drains in-flight reloads and background builds so old snapshot compilation cannot cross reload or destroy boundaries. Replay compilation for AdGuard, V2Ray, and related providers also gains stronger source-location, comment-handling, and rollback coverage.
+       - `fix(download/upgrade)`: shared HTTP downloads now own temporary files through drop cleanup, removing incomplete files after timeout, cancellation, or failure and atomically replacing the destination only after success. Windows ZIP-upgrade path handling is corrected as well.
+       - `deps/ci/release`: move to `oxidns-mikrotik-rs 0.8.1`, which includes lossless Tokio response delivery, and remove the temporary Git patch plus crates.io `--no-verify`. Update `hotpath`, `base64`, and other dependencies, isolate cross-target build caches, and publish version-bumped workspace support crates in dependency order before the root package.
+       - `docs/benchmarks/telegram`: reorganize bilingual installation, configuration, CLI, API, and plugin references; add reproducible multi-implementation benchmark scenarios and results; and render Telegram announcements as compatible HTML that preserves headings, lists, emphasis, inline code, and links, with truncation tests.
+
+       **Compatibility and Upgrade Notes**
+
+       - The root crate version is `1.5.2`; `oxidns-proto` is updated to `0.1.5` and `oxidns-zoneparser` to `0.1.2`; the release tag should be `v1.5.2`. Publication now uploads new support-crate versions before the root crate.
+       - v1.5.1 configurations upgrade directly. No fields are renamed or removed, and no existing plugin policy defaults change. Run `oxidns check -c <config-file>` before replacing the binary.
+       - `client_ip_from_ecs` changes the request-local client IP observed by later plugins. Place it before the affected matchers and recorders, allow only controlled reverse proxies or local forwarders in `args`, and never trust a source reachable directly by clients. The forwarder must send `/32` or `/128` ECS; network prefixes are ignored.
+       - Omitting `dual_selector.probe_executor` preserves v1.5.1 behavior. When configured, probe-context marks, responses, and transient state do not flow back to the original request, but completed external side effects cannot be rolled back; dedicated probe chains should favor side-effect-free resolution executors.
+       - Existing single-value `mark` syntax remains valid, and only an explicit `set_mark` clears the previous set. If a large rule file changes during one multi-pass build, the candidate is rejected and the previous snapshot remains active; automation should trigger reload only after the replacement file is fully installed.
+   </ReleaseCard>
+</div>
+
 ## 2026-07
 
 <div className="release-stack">
-   <ReleaseCard version="v1.5.1" badge="Patch Release" date="2026-07-22" defaultOpen>
+   <ReleaseCard version="v1.5.1" badge="Patch Release" date="2026-07-22">
        **Release Scope**
 
        - Patch Release. v1.5.1 focuses on matcher runtime control, upgrade operations, and WebUI quality. It expands temporary matcher switching into tri-state base-result controls, adds force and post-upgrade cleanup controls, and delivers a concentrated set of localization, polling, log-viewer, and plugin-card fixes.

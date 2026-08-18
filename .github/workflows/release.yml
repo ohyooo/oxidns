@@ -175,6 +175,9 @@ jobs:
 
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          # The automatic key describes the host toolchain, not the cross target.
+          key: ${{ matrix.target }}-full
 
       - name: Download WebUI artifact
         uses: actions/download-artifact@v8
@@ -326,6 +329,9 @@ jobs:
 
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          # Both target and feature bundle affect reusable dependency artifacts.
+          key: ${{ matrix.target }}-${{ matrix.bundle }}
 
       - name: Install cross
         run: cargo install cross --git https://github.com/cross-rs/cross
