@@ -417,17 +417,7 @@ fn parse_dual_selector_config(args: Option<Value>) -> Result<ParsedDualSelectorC
         None => DualSelectorConfig::default(),
     };
 
-    let configured_probe_executor = cfg.probe_executor;
-    let probe_executor = configured_probe_executor
-        .as_deref()
-        .map(str::trim)
-        .filter(|tag| !tag.is_empty());
-    if configured_probe_executor.is_some() && probe_executor.is_none() {
-        return Err(DnsError::plugin(
-            "dual_selector probe_executor cannot be empty",
-        ));
-    }
-    let probe_executor = probe_executor.map(ToOwned::to_owned);
+    let probe_executor = normalize_probe_executor(cfg.probe_executor)?;
 
     let cache_enabled = cfg.cache.unwrap_or(DEFAULT_CACHE_ENABLED);
     let cache_ttl_secs = cfg.cache_ttl.unwrap_or(DEFAULT_CACHE_TTL_SECS);
@@ -448,13 +438,26 @@ fn parse_dual_selector_config(args: Option<Value>) -> Result<ParsedDualSelectorC
     })
 }
 
+fn normalize_probe_executor(configured_probe_executor: Option<String>) -> Result<Option<String>> {
+    let probe_executor = configured_probe_executor
+        .as_deref()
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty());
+    if configured_probe_executor.is_some() && probe_executor.is_none() {
+        return Err(DnsError::plugin(
+            "dual_selector probe_executor cannot be empty",
+        ));
+    }
+    Ok(probe_executor.map(ToOwned::to_owned))
+}
+
 impl PluginFactory for DualSelectorFactory {
     fn get_dependency_specs(&self, plugin_config: &PluginConfig) -> Vec<DependencySpec> {
         plugin_config
             .args
             .clone()
             .and_then(|args| serde_yaml_ng::from_value::<DualSelectorConfig>(args).ok())
-            .and_then(|cfg| cfg.probe_executor)
+            .and_then(|cfg| normalize_probe_executor(cfg.probe_executor).ok().flatten())
             .map(|tag| vec![DependencySpec::executor("args.probe_executor", tag)])
             .unwrap_or_default()
     }
@@ -504,6 +507,7 @@ mod tests {
     use super::*;
     use crate::plugin::executor::sequence::chain::ChainProgram;
     use crate::plugin::executor::{ExecStep, Executor};
+    use crate::plugin::test_utils::plugin_config;
     use crate::proto::rdata::{A, AAAA};
     use crate::proto::{DNSClass, Message, Name, Question, RData, Record};
 
@@ -537,6 +541,22 @@ mod tests {
         let mut selector = make_selector(preferred_type);
         selector.probe_executor = Some(probe_executor);
         selector
+    }
+
+    #[test]
+    fn dependency_specs_normalize_probe_executor_tag() {
+        let factory = DualSelectorFactory::new(RecordType::A);
+        let args = serde_yaml_ng::from_str("probe_executor: ' probe_sequence '")
+            .expect("probe executor config should parse");
+        let config = plugin_config("selector", "prefer_ipv4", Some(args));
+
+        assert_eq!(
+            factory.get_dependency_specs(&config),
+            vec![DependencySpec::executor(
+                "args.probe_executor",
+                "probe_sequence"
+            )]
+        );
     }
 
     fn set_answer(context: &mut DnsContext, qtype: RecordType) {

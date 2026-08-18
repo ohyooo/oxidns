@@ -75,7 +75,7 @@ impl Executor for ClientIpFromEcs {
                     if source_prefix == expected_prefix {
                         Some(normalize_ipv4_mapped_ip(addr))
                     } else {
-                        tracing::warn!(
+                        tracing::debug!(
                             plugin = %self.tag,
                             ecs_addr = %addr,
                             source_prefix,

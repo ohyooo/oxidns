@@ -815,9 +815,10 @@ It can also be used through sequence quick setup:
 
 - Checks `args` against the unmodified transport peer and ignores ECS when the
   peer is not trusted.
-- Replaces the client IP when the source is trusted, ECS exists, and its source prefix is non-zero,
-  while preserving the original connection port.
-- Makes no change when ECS is absent or its source prefix is `0`.
+- Replaces the client IP when the source is trusted, ECS exists, and its source prefix is `/32`
+  for IPv4 or `/128` for IPv6, while preserving the original connection port.
+- Makes no change when ECS is absent or its source prefix is not the full host prefix for its
+  address family.
 - Supports IPv4 and IPv6 and normalizes IPv4-mapped IPv6 addresses.
 - Does not alter or remove ECS; configure `ecs_handler` separately for ECS
   forwarding or cleanup.

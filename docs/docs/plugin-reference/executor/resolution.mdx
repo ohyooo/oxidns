@@ -858,8 +858,8 @@ old-static.example.com static.example.net
 ### 行为说明
 
 - 先用未修改的原始连接 IP 检查 `args`；不命中时忽略 ECS。
-- 来源可信、ECS 存在且 source prefix 非零时，覆盖客户端 IP，但保留原连接端口。
-- ECS 缺失或 source prefix 为 `0` 时不做修改。
+- 来源可信、ECS 存在且 IPv4 source prefix 为 `/32` 或 IPv6 source prefix 为 `/128` 时，覆盖客户端 IP，但保留原连接端口。
+- ECS 缺失或 source prefix 不是对应地址族的完整 host prefix 时不做修改。
 - 支持 IPv4 和 IPv6，也会规范化 IPv4-mapped IPv6 地址。
 - 不修改或删除 ECS；如需 ECS 转发/清理，另行配置 `ecs_handler`。
 - 修改仅限当前请求上下文，后续 `client_ip` matcher、模板和 query recorder
