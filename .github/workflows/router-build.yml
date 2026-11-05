@@ -1,0 +1,62 @@
+name: Router Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  binary:
+    name: AArch64 musl full binary
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: router-aarch64-musl-full
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+      - name: Build router binary
+        run: >-
+          cross build --locked --release --bin oxidns
+          --target aarch64-unknown-linux-musl
+          --no-default-features --features full
+      - name: Record binary checksum
+        working-directory: target/aarch64-unknown-linux-musl/release
+        run: sha256sum oxidns > oxidns.sha256
+      - uses: actions/upload-artifact@v7
+        with:
+          name: oxidns-aarch64-unknown-linux-musl
+          path: |
+            target/aarch64-unknown-linux-musl/release/oxidns
+            target/aarch64-unknown-linux-musl/release/oxidns.sha256
+          if-no-files-found: error
+
+  webui:
+    name: WebUI typecheck and build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: webui/pnpm-lock.yaml
+      - name: Build WebUI
+        working-directory: webui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+          pnpm build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: router-webui
+          path: webui/out
+          if-no-files-found: error
