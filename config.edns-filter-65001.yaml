@@ -1,0 +1,37 @@
+# Example: drop EDNS option 65001 from upstream requests while keeping
+# other EDNS options and preserving the original request for local rules.
+# Run: oxidns start -c config.edns-filter-65001.yaml
+#
+# Replace the upstream with your resolver. The UDP listener is local only.
+plugins:
+  - tag: privacy_filter
+    type: edns_filter
+    args:
+      policy: preserve
+      denylist: [65001]
+      restore_request: true
+
+  - tag: forward_main
+    type: forward
+    args:
+      upstreams:
+        - addr: "udp://1.1.1.1:53"
+
+  - tag: upstream_scope
+    type: sequence
+    args:
+      - exec: $privacy_filter
+      - exec: $forward_main
+
+  - tag: main
+    type: sequence
+    args:
+      - exec: jump upstream_scope
+      # Local rules added here see the original request and the upstream response.
+      - exec: accept
+
+  - tag: local_udp
+    type: udp_server
+    args:
+      entry: main
+      listen: "127.0.0.1:5335"
